@@ -236,7 +236,7 @@ static ssize_t fts_fwupdate_store(struct device *dev,
 	mode[1] = 1;
 
 	/* reading out firmware upgrade parameters */
-	sscanf(buf, "%100s %d %d", path, &mode[0], &mode[1]);
+	sscanf(buf, "%99s %d %d", path, &mode[0], &mode[1]);
 	logError(1, "%s fts_fwupdate_store: mode = %s \n", tag, path);
 
 	ret = flashProcedure(path, mode[0], mode[1]);
@@ -5396,7 +5396,7 @@ int fts_read_touchmode_data(void)
 	return ret;
 }
 
-static void fts_init_touchmode_data()
+static void fts_init_touchmode_data(void)
 {
 	int i;
 	struct fts_hw_platform_data *bdata = NULL;
@@ -5700,7 +5700,7 @@ static void fts_update_grip_mode(void)
 	return;
 }
 
-static void fts_update_touchmode_data()
+static void fts_update_touchmode_data(void)
 {
 	bool update = false;
 	int i, j, ret = 0;
