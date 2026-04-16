@@ -1347,7 +1347,7 @@ out_tocache:
 		set_page_private(page, Z_EROFS_SHORTLIVED_PAGE);
 		goto out;
 	}
-	attach_page_private(page, pcl);
+	attach_page_private(page, (unsigned long)pcl);
 	/* drop a refcount added by allocpage (then we have 2 refs here) */
 	put_page(page);
 
