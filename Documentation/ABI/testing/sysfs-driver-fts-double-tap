@@ -1,0 +1,11 @@
+What:           /sys/devices/virtual/touch/tp_dev/double_tap
+Date:           September 2026
+Contact:        Xiaomi Crux kernel maintainers
+Description:
+                Write a boolean to enable or disable double tap to wake on the
+                ST FTS touchscreen. The write updates only the double-tap
+                gesture mask and applies the current touch mode. Other gesture
+                bits are preserved. Invalid values, incompatible cover mode,
+                and controller failures return an error to the caller.
+                This interface does not use the legacy gesture_mask command
+                staging buffer and does not require a subsequent read.

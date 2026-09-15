@@ -1095,6 +1095,53 @@ static ssize_t fts_gesture_mask_store(struct device *dev,
 
 #endif
 
+static DEFINE_MUTEX(fts_double_tap_lock);
+
+static int fts_set_double_tap(struct fts_ts_info *info, bool enabled)
+{
+	u8 double_tap_mask[GESTURE_MASK_SIZE] = { 0 };
+	int res;
+
+	mutex_lock(&fts_double_tap_lock);
+	if (enabled && check_feature_feasibility(info, FEAT_SEL_GESTURE) < OK) {
+		res = -EBUSY;
+		goto out;
+	}
+
+	fromIDtoMask(GEST_ID_DBLTAP, double_tap_mask, sizeof(double_tap_mask));
+	res = updateGestureMask(double_tap_mask, sizeof(double_tap_mask),
+			       enabled ? FEAT_ENABLE : FEAT_DISABLE);
+	if (res < OK) {
+		res = -EIO;
+		goto out;
+	}
+
+	info->gesture_enabled = isAnyGestureActive();
+	res = fts_mode_handler(info, 0);
+	res = res < OK ? -EIO : 0;
+out:
+	mutex_unlock(&fts_double_tap_lock);
+	return res;
+}
+
+static ssize_t double_tap_store(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	struct fts_ts_info *info = dev_get_drvdata(dev);
+	bool enabled;
+	int res;
+
+	res = kstrtobool(buf, &enabled);
+	if (res)
+		return res;
+
+	res = fts_set_double_tap(info, enabled);
+	if (res)
+		return res;
+	return count;
+}
+
 /**
  * File node to read the coordinates of the last gesture drawn by the user \n
  * cat gesture_coordinates			to obtain the gesture coordinates \n
@@ -3366,11 +3413,21 @@ static DEVICE_ATTR(stylus_mode, (S_IRUGO | S_IWUSR | S_IWGRP),
 #endif
 
 #ifdef GESTURE_MODE
+static DEVICE_ATTR_WO(double_tap);
 static DEVICE_ATTR(gesture_mask, (S_IRUGO | S_IWUSR | S_IWGRP),
 		   fts_gesture_mask_show, fts_gesture_mask_store);
 static DEVICE_ATTR(gesture_coordinates, (S_IRUGO | S_IWUSR | S_IWGRP),
 		   fts_gesture_coordinates_show, NULL);
 #endif
+
+static struct attribute *fts_touch_attrs[] = {
+#ifdef GESTURE_MODE
+	&dev_attr_double_tap.attr,
+#endif
+	NULL,
+};
+ATTRIBUTE_GROUPS(fts_touch);
+
 static DEVICE_ATTR(doze_time, (S_IRUGO | S_IWUSR | S_IWGRP),
 		   fts_doze_time_show, fts_doze_time_store);
 static DEVICE_ATTR(grip_enable, (S_IRUGO | S_IWUSR | S_IWGRP),
@@ -4266,7 +4323,7 @@ static void fts_gesture_event_handler(struct fts_ts_info *info,
 #endif
 		switch (event[2]) {
 		case GEST_ID_DBLTAP:
-			if (!info->gesture_enabled)
+			if (!isGestureActive(GEST_ID_DBLTAP))
 				goto gesture_done;
 			value = KEY_WAKEUP;
 			logError(0, "%s %s: double tap ! \n", tag, __func__);
@@ -5132,6 +5189,7 @@ static int fts_mode_handler(struct fts_ts_info *info, int force)
 	int ret = OK;
 	u8 settings[4] = { 0 };
 #ifdef CONFIG_FTS_FOD_AREA_REPORT
+	bool double_tap_enabled = false;
 	u8 gesture_cmd[6] = {0xA2, 0x03, 0x20, 0x00, 0x00, 0x01};
 	u8 single_only_cmd[4] = {0xC0, 0x02, 0x00, 0x00};
 	u8 single_double_cmd[4] = {0xC0, 0x02, 0x01, 0x1E};
@@ -5139,6 +5197,9 @@ static int fts_mode_handler(struct fts_ts_info *info, int force)
 
 #ifdef CONFIG_FTS_FOD_AREA_REPORT
 	mutex_lock(&info->fod_mutex);
+#ifdef GESTURE_MODE
+	double_tap_enabled = isGestureActive(GEST_ID_DBLTAP);
+#endif
 #endif
 	info->mode = MODE_NOTHING;
 	logError(0, "%s %s: Mode Handler starting... \n", tag, __func__);
@@ -5155,7 +5216,7 @@ static int fts_mode_handler(struct fts_ts_info *info, int force)
 						 tag, __func__, res);
 			res = setScanMode(SCAN_MODE_LOW_POWER, 0);
 			res |= ret;
-			if (info->gesture_enabled == 1) {
+			if (double_tap_enabled) {
 				res = fts_write_dma_safe(single_double_cmd, ARRAY_SIZE(single_double_cmd));
 				if (res < OK)
 						logError(1, "%s %s: set single and double tap delay time failed! ERROR %08X\n", tag, __func__, res);
@@ -6706,32 +6767,16 @@ static void fts_switch_mode_work(struct work_struct *work)
 
 	struct fts_ts_info *info = ms->info;
 	unsigned char value = ms->mode;
-	static const char *fts_gesture_on = "01 20";
-	char *gesture_result;
-	int size = 6 * 2 + 1;
 
 	logError(1, "%s %s mode:%d\n", tag, __func__, value);
 
 	if (value >= INPUT_EVENT_WAKUP_MODE_OFF
 	    && value <= INPUT_EVENT_WAKUP_MODE_ON) {
-		info->gesture_enabled = value - INPUT_EVENT_WAKUP_MODE_OFF;
-		if (info->gesture_enabled) {
-			gesture_result = (u8 *) kzalloc(size, GFP_KERNEL);
-			if (gesture_result != NULL) {
-				fts_gesture_mask_store(info->dev, NULL,
-						       fts_gesture_on,
-						       strlen(fts_gesture_on));
-				fts_gesture_mask_show(info->dev, NULL,
-						      gesture_result);
-				if (strncmp
-				    ("{ 00000000 }", gesture_result, size - 1))
-					logError(1,
-						 "%s %s:store gesture mask error\n",
-						 tag, __func__);
-				kfree(gesture_result);
-				gesture_result = NULL;
-			}
-		}
+#ifdef GESTURE_MODE
+		if (fts_set_double_tap(info, value == INPUT_EVENT_WAKUP_MODE_ON))
+			logError(1, "%s %s: cannot update double tap mode\n",
+				 tag, __func__);
+#endif
 	} else if (value >= INPUT_EVENT_COVER_MODE_OFF
 		   && value <= INPUT_EVENT_COVER_MODE_ON) {
 		info->glove_enabled = value - INPUT_EVENT_COVER_MODE_OFF;
@@ -7674,16 +7719,32 @@ static int fts_probe(struct spi_device *client)
 	}
 #endif
 
+#ifdef CONFIG_FTS_FOD_AREA_REPORT
+	mutex_init(&(info->fod_mutex));
+#ifdef CONFIG_FACTORY_BUILD
+	info->fod_status = 1;
+#else
+	info->fod_status = -1;
+#endif
+#endif
+
 	if (info->fts_tp_class == NULL)
 #ifdef CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE
 		info->fts_tp_class = get_xiaomi_touch_class();
 #else
 		info->fts_tp_class = class_create(THIS_MODULE, "touch");
 #endif
-	info->fts_touch_dev =
-	    device_create(info->fts_tp_class, NULL, 0x49, info, "tp_dev");
+	if (IS_ERR_OR_NULL(info->fts_tp_class)) {
+		error = info->fts_tp_class ? PTR_ERR(info->fts_tp_class) : -ENODEV;
+		info->fts_tp_class = NULL;
+		goto ProbeErrorExit_7;
+	}
 
+	info->fts_touch_dev = device_create_with_groups(info->fts_tp_class,
+				NULL, 0x49, info, fts_touch_groups, "tp_dev");
 	if (IS_ERR(info->fts_touch_dev)) {
+		error = PTR_ERR(info->fts_touch_dev);
+		info->fts_touch_dev = NULL;
 		logError(1,
 			 "%s ERROR: Failed to create device for the sysfs!\n",
 			 tag);
@@ -7702,12 +7763,6 @@ static int fts_probe(struct spi_device *client)
 	}
 #endif
 #ifdef CONFIG_FTS_FOD_AREA_REPORT
-	mutex_init(&(info->fod_mutex));
-#ifdef CONFIG_FACTORY_BUILD
-	info->fod_status = 1;
-#else
-	info->fod_status = -1;
-#endif
 	res = fts_write(gesture_cmd, ARRAY_SIZE(gesture_cmd));
 	if (res < OK)
 		logError(1, "%s %s: enter gesture and longpress failed! ERROR %08X recovery in senseOff...\n",
@@ -7768,23 +7823,23 @@ static int fts_probe(struct spi_device *client)
 
 	logError(1, "%s Probe Finished! \n", tag);
 	return OK;
-#ifdef CONFIG_FTS_TOUCH_COUNT_DUMP
 ProbeErrorExit_8:
-	device_destroy(info->fts_tp_class, 0x49);
+	if (info->fts_touch_dev)
+		device_unregister(info->fts_touch_dev);
+#ifndef CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE
 	class_destroy(info->fts_tp_class);
-	info->fts_tp_class = NULL;
 #endif
+	info->fts_tp_class = NULL;
 ProbeErrorExit_7:
 #ifdef CONFIG_SECURE_TOUCH
 	fts_secure_remove(info);
 #endif
 #ifdef CONFIG_I2C_BY_DMA
-	if (info->dma_buf)
-		kfree(info->dma_buf);
-	if (info->dma_buf->rdBuf)
+	if (info->dma_buf) {
 		kfree(info->dma_buf->rdBuf);
-	if (info->dma_buf->wrBuf)
 		kfree(info->dma_buf->wrBuf);
+		kfree(info->dma_buf);
+	}
 #endif
 #ifdef CONFIG_DRM
 	msm_drm_unregister_client(&info->notifier);
@@ -7828,8 +7883,11 @@ static int fts_remove(struct spi_device *client)
 #endif
 
 	struct fts_ts_info *info = dev_get_drvdata(&(client->dev));
+	struct device *touch_dev = get_device(info->fts_touch_dev);
 
 	fts_proc_remove();
+	/* Stop sysfs I/O, but keep queued suspend notifications' kobject alive. */
+	device_unregister(info->fts_touch_dev);
 	/* sysfs stuff */
 	sysfs_remove_group(&client->dev.kobj, &info->attrs);
 	/* remove interrupt and event handlers */
@@ -7850,16 +7908,16 @@ static int fts_remove(struct spi_device *client)
 #ifdef CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE
 	destroy_workqueue(info->touch_feature_wq);
 #endif
+	put_device(touch_dev);
+#ifndef CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE
+	class_destroy(info->fts_tp_class);
+#endif
+	info->fts_tp_class = NULL;
 #ifdef CONFIG_FTS_TOUCH_COUNT_DUMP
 	if (info->board->dump_click_count && !info->current_clicknum_file) {
 		kfree(info->current_clicknum_file);
 		info->current_clicknum_file = NULL;
 	}
-	sysfs_remove_file(&info->fts_touch_dev->kobj,
-			  &dev_attr_touch_suspend_notify.attr);
-	device_destroy(info->fts_tp_class, DCHIP_ID_0);
-	class_destroy(info->fts_tp_class);
-	info->fts_tp_class = NULL;
 #endif
 
 	fts_enable_reg(info, false);

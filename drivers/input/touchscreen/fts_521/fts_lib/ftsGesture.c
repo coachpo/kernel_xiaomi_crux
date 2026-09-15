@@ -248,6 +248,26 @@ END:
 }
 
 /**
+ * isGestureActive - check the requested mask for one gesture
+ * @gesture_id: firmware gesture identifier
+ *
+ * Return: FEAT_ENABLE if this gesture is enabled, FEAT_DISABLE otherwise.
+ */
+int isGestureActive(u8 gesture_id)
+{
+	unsigned int index = gesture_id / 8;
+	int active;
+
+	if (index >= GESTURE_MASK_SIZE)
+		return FEAT_DISABLE;
+
+	mutex_lock(&gestureMask_mutex);
+	active = !!(gesture_mask[index] & (1U << (gesture_id % 8)));
+	mutex_unlock(&gestureMask_mutex);
+	return active;
+}
+
+/**
  * Check if one or more Gesture IDs are currently enabled in gesture_mask
  * @return FEAT_ENABLE if one or more gesture ids are enabled, FEAT_DISABLE if all the gesture ids are currently disabled
  */

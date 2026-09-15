@@ -32,6 +32,7 @@ int disableGesture(u8 *mask, int size);
 int enableGesture(u8 *mask, int size);
 int enterGestureMode(int reload);
 int isAnyGestureActive(void);
+int isGestureActive(u8 gesture_id);
 int readGestureCoords(u8 *event);
 int getGestureCoords(u16 **x, u16 **y);
 
