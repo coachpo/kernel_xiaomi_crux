@@ -23,6 +23,11 @@
 #include "sdx5xm-external-soc.dtsi"
 #include "sm8150-sdx50m.dtsi"
 
+/* Android uses the first-stage fstab packaged in the ramdisk. */
+&android_q_fstab {
+	status = "disabled";
+};
+
 / {
 	model = "SDX50M CRUX";
 	compatible = "qcom,sm8150-mtp", "qcom,sm8150", "qcom,mtp";
