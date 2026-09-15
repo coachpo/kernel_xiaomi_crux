@@ -1572,7 +1572,7 @@ config MACH_XIAOMI_CEPHEUS
           Support for Xiaomi MI 9
 
 config MACH_XIAOMI_CRUX
-        bool "polaris board"
+        bool "crux board"
         select MACH_XIAOMI_SM8150
         help
           Support for Xiaomi MI 9 Pro (5G)
@@ -1583,12 +1583,22 @@ config MACH_XIAOMI_RAPHAEL
         help
           Support for Redmi K20 Pro (Xiaomi MI 9T Pro)
 
-config MACH_XIAOMI_CRUX
-        bool "crux board"
-        select MACH_XIAOMI_SM8150
-        help
-          Support for Xiaomi 9 Pro 5G
-
 endmenu
+
+# Crux's SM8150 CPU map has four little, three big and one prime CPU.
+config LITTLE_CPU_MASK
+	hex
+	depends on MACH_XIAOMI_CRUX
+	default 0x0f
+
+config BIG_CPU_MASK
+	hex
+	depends on MACH_XIAOMI_CRUX
+	default 0x70
+
+config PRIME_CPU_MASK
+	hex
+	depends on MACH_XIAOMI_CRUX
+	default 0x80
 
 endmenu
