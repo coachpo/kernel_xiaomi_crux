@@ -4430,7 +4430,8 @@ static void _sde_plane_install_properties(struct drm_plane *plane,
 	}
 
 	msm_property_install_range(&psde->property_info, "zpos",
-		0x0, 0, zpos_max, zpos_def, PLANE_PROP_ZPOS);
+		0x0, 0, zpos_max | FOD_PRESSED_LAYER_ZORDER, zpos_def,
+		PLANE_PROP_ZPOS);
 
 	msm_property_install_range(&psde->property_info, "fod",
 		0x0, 0, INT_MAX, 0, PLANE_PROP_FOD);
@@ -4872,6 +4873,8 @@ static int sde_plane_atomic_set_property(struct drm_plane *plane,
 {
 	struct sde_plane *psde = plane ? to_sde_plane(plane) : NULL;
 	struct sde_plane_state *pstate;
+	struct drm_property *fod_property;
+	u64 fod_val;
 	int idx, ret = -EINVAL;
 
 	SDE_DEBUG_PLANE(psde, "\n");
@@ -4882,11 +4885,25 @@ static int sde_plane_atomic_set_property(struct drm_plane *plane,
 		SDE_ERROR_PLANE(psde, "invalid state\n");
 	} else {
 		pstate = to_sde_plane_state(state);
+		idx = msm_property_index(&psde->property_info, property);
+		if (idx == PLANE_PROP_ZPOS) {
+			fod_val = val & FOD_PRESSED_LAYER_ZORDER ? 2 : 0;
+			val &= ~(u64)FOD_PRESSED_LAYER_ZORDER;
+			/* The marker must not bypass the hardware zpos limit. */
+			if (val > (property->values[1] &
+					~(u64)FOD_PRESSED_LAYER_ZORDER))
+				return -EINVAL;
+
+			fod_property = psde->property_info.property_array[PLANE_PROP_FOD];
+			ret = msm_property_atomic_set(&psde->property_info,
+					&pstate->property_state,
+					fod_property, fod_val);
+			if (ret)
+				return ret;
+		}
 		ret = msm_property_atomic_set(&psde->property_info,
 				&pstate->property_state, property, val);
 		if (!ret) {
-			idx = msm_property_index(&psde->property_info,
-					property);
 			switch (idx) {
 			case PLANE_PROP_INPUT_FENCE:
 				_sde_plane_set_input_fence(psde, pstate, val);

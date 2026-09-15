@@ -606,34 +606,28 @@ static int _sde_connector_update_dirty_properties(
 static int dsi_display_write_panel(struct dsi_display *display,
 				struct dsi_panel_cmd_set *cmd_sets)
 {
-	int rc = 0, i = 0;
+	int rc = 0, clk_rc;
 	ssize_t len;
-	u32 count;
+	u32 count, i;
 	struct dsi_cmd_desc *cmds;
 	enum dsi_cmd_set_state state;
-	struct dsi_display_mode *mode;
 	struct dsi_panel *panel = display->panel;
 	const struct mipi_dsi_host_ops *ops = panel->host->ops;
+
+	if (!cmd_sets->count || !cmd_sets->cmds)
+		return -EINVAL;
 
 	rc = dsi_display_clk_ctrl(display->dsi_clk_handle,
 			DSI_CORE_CLK, DSI_CLK_ON);
 	if (rc) {
 		pr_err("[%s] failed to enable DSI core clocks, rc=%d\n",
 		       display->name, rc);
-		goto error;
+		return rc;
 	}
-
-	mode = panel->cur_mode;
 
 	cmds = cmd_sets->cmds;
 	count = cmd_sets->count;
 	state = cmd_sets->state;
-
-	if (count == 0) {
-		pr_debug("[%s] No commands to be sent for state\n",
-			 panel->name);
-		goto error;
-	}
 
 	for (i = 0; i < count; i++) {
 		if (state == DSI_CMD_SET_STATE_LP)
@@ -642,11 +636,11 @@ static int dsi_display_write_panel(struct dsi_display *display,
 		if (cmds->last_command)
 			cmds->msg.flags |= MIPI_DSI_MSG_LASTCOMMAND;
 
-		len = ops->transfer(panel->host, &cmds->msg);//dsi_host_transfer,
+		len = ops->transfer(panel->host, &cmds->msg);
 		if (len < 0) {
 			rc = len;
 			pr_err("failed to set cmds, rc=%d\n", rc);
-			goto error;
+			goto disable_clocks;
 		}
 		if (cmds->post_wait_ms)
 			usleep_range(cmds->post_wait_ms*1000,
@@ -654,64 +648,29 @@ static int dsi_display_write_panel(struct dsi_display *display,
 		cmds++;
 	}
 
-	rc = dsi_display_clk_ctrl(display->dsi_clk_handle,
+disable_clocks:
+	clk_rc = dsi_display_clk_ctrl(display->dsi_clk_handle,
 			DSI_CORE_CLK, DSI_CLK_OFF);
-	if (rc) {
+	if (clk_rc)
 		pr_err("[%s] failed to disable DSI core clocks, rc=%d\n",
-		       display->name, rc);
-		goto error;
-	}
-error:
-	return rc;
-}
-
-void sde_crtc_fod_ui_ready(struct dsi_display *display, int type, int value)
-{
-	if (!display)
-		return;
-
-	/* HBM */
-	if (type == 1) {
-		if (value == 0)
-			display->panel->fod_ui_ready &= ~0x01;
-		else if (value == 1)
-			display->panel->fod_ui_ready |= 0x01;
-	}
-
-	/* ICON */
-	if (type == 2) {
-		if (value == 0)
-			display->panel->fod_ui_ready &= ~0x0002;
-		else if (value == 1) {
-			display->panel->fod_ui_ready |= 0x02;
-		}
-
-	}
-
-	pr_info("sde_crtc_fod_ui_ready notify: %d\n", display->panel->fod_ui_ready);
-	sysfs_notify(&display->drm_conn->kdev->kobj, NULL, "fod_ui_ready");
+		       display->name, clk_rc);
+	return rc ? rc : clk_rc;
 }
 
 int sde_connector_update_hbm(struct sde_connector *c_conn)
 {
-	struct drm_connector *connector;
 	struct dsi_display *dsi_display;
-	struct sde_connector_state *c_state;
 	int rc = 0;
 	u32 dim_backlight;
-	static bool hbm_overlay;
+	bool hbm_overlay;
 
 	if (!c_conn) {
 		SDE_ERROR("Invalid params sde_connector null\n");
 		return -EINVAL;
 	}
 
-	connector = &c_conn->base;
-
 	if (c_conn->connector_type != DRM_MODE_CONNECTOR_DSI)
 		return 0;
-
-	c_state = to_sde_connector_state(connector->state);
 
 	dsi_display = c_conn->display;
 	if (!dsi_display || !dsi_display->panel || !dsi_display->drm_dev) {
@@ -722,15 +681,14 @@ int sde_connector_update_hbm(struct sde_connector *c_conn)
 		return -EINVAL;
 	}
 
-	if (!dsi_display->panel->fod_dimlayer_enabled) {
-		return 0;
-	}
 	if (!c_conn->encoder || !c_conn->encoder->crtc ||
 	    !c_conn->encoder->crtc->state) {
 		return 0;
 	}
 
-	hbm_overlay = c_conn->mi_dimlayer_state.mi_dimlayer_type & MI_DIMLAYER_FOD_HBM_OVERLAY;
+	hbm_overlay = dsi_display->panel->fod_dimlayer_enabled &&
+		(c_conn->mi_dimlayer_state.mi_dimlayer_type &
+		 MI_DIMLAYER_FOD_HBM_OVERLAY);
 
 	pr_debug("hbm_overlay:%d, mi_dimlayer_type:%d fod_hbm_enabled:%d dc_enable:%d\n", hbm_overlay,
 	c_conn->mi_dimlayer_state.mi_dimlayer_type, dsi_display->panel->fod_dimlayer_hbm_enabled, dsi_display->panel->dc_enable);
@@ -746,11 +704,18 @@ int sde_connector_update_hbm(struct sde_connector *c_conn)
 				(dsi_display->drm_dev && dsi_display->drm_dev->doze_state == MSM_DRM_BLANK_LP2))) {
 				if (dsi_display->drm_dev->doze_brightness == DOZE_BRIGHTNESS_HBM) {
 					pr_info("hbm fod off doze hbm on\n");
-					dsi_display_write_panel(dsi_display, &dsi_display->panel->hbm_fod_off_doze_hbm_on);
+					rc = dsi_display_write_panel(dsi_display,
+						&dsi_display->panel->hbm_fod_off_doze_hbm_on);
 				} else if (dsi_display->drm_dev->doze_brightness == DOZE_BRIGHTNESS_LBM) {
 					pr_info("hbm fod off doze lbm on\n");
-					dsi_display_write_panel(dsi_display, &dsi_display->panel->hbm_fod_off_doze_lbm_on);
+					rc = dsi_display_write_panel(dsi_display,
+						&dsi_display->panel->hbm_fod_off_doze_lbm_on);
+				} else {
+					rc = -EINVAL;
 				}
+				if (rc)
+					goto hbm_off_done;
+				dsi_display->panel->fod_dimlayer_hbm_enabled = false;
 				dsi_display->panel->in_aod = true;
 				dsi_display->panel->skip_dimmingon = STATE_DIM_BLOCK;
 			} else {
@@ -760,10 +725,14 @@ int sde_connector_update_hbm(struct sde_connector *c_conn)
 				} else {
 					rc = dsi_display_write_panel(dsi_display, &dsi_display->panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_DISP_HBM_FOD_OFF]);
 				}
+				if (rc)
+					goto hbm_off_done;
+				dsi_display->panel->fod_dimlayer_hbm_enabled = false;
 				dsi_display->panel->skip_dimmingon = STATE_DIM_RESTORE;
 				if (dsi_display->panel->dim_layer_replace_dc) {
 					SDE_ATRACE_BEGIN("restore_crc");
-					dsi_panel_set_backlight(dsi_display->panel, c_conn->bl_device->props.brightness);
+					rc = dsi_panel_set_backlight(dsi_display->panel,
+						c_conn->bl_device->props.brightness);
 					dsi_display->panel->dim_layer_replace_dc = false;
 					dsi_display->panel->dc_enable = true;
 					pr_info("fod restore DC\n");
@@ -771,7 +740,7 @@ int sde_connector_update_hbm(struct sde_connector *c_conn)
 					SDE_ATRACE_END("restore_crc");
 				}
 			}
-			dsi_display->panel->fod_dimlayer_hbm_enabled = false;
+hbm_off_done:
 			SDE_ATRACE_END("set_hbm_off");
 			mutex_unlock(&dsi_display->panel->panel_lock);
 			if (rc) {
@@ -784,7 +753,11 @@ int sde_connector_update_hbm(struct sde_connector *c_conn)
 			SDE_ATRACE_BEGIN("set_hbm_on");
 			mutex_lock(&dsi_display->panel->panel_lock);
 			pr_info("fod set dimming on\n");
-			rc = dsi_display_write_panel(dsi_display, &dsi_display->panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_DISP_DIMMINGON]);
+			rc = dsi_display_write_panel(dsi_display,
+				&dsi_display->panel->cur_mode->priv_info->cmd_sets[
+					DSI_CMD_SET_DISP_DIMMINGON]);
+			if (rc)
+				goto hbm_on_done;
 
 			if (dsi_display->panel->last_bl_lvl >= dsi_display->panel->bl_config.bl_max_level - 1) {
 				if (dsi_display->panel->backlight_delta == -1)
@@ -817,32 +790,42 @@ int sde_connector_update_hbm(struct sde_connector *c_conn)
 			} else {
 				rc = dsi_panel_set_backlight(dsi_display->panel, dim_backlight);
 			}
+			if (rc)
+				goto hbm_on_done;
 			pr_info("HBM fod on\n");
 			sde_encoder_wait_for_event(c_conn->encoder, MSM_ENC_VBLANK);
 			if (dsi_display->panel->dc_enable || dsi_display->panel->crc_flag) {
 				SDE_ATRACE_BEGIN("set_crc_off");
-				if(dsi_display->panel->dc_enable){
+				pr_info("fod set CRC OFF\n");
+				rc = dsi_display_write_panel(dsi_display,
+					&dsi_display->panel->cur_mode->priv_info->cmd_sets[
+						DSI_CMD_SET_DISP_CRC_OFF]);
+				SDE_ATRACE_END("set_crc_off");
+				if (rc)
+					goto hbm_on_done;
+				if (dsi_display->panel->dc_enable) {
 					dsi_display->panel->dim_layer_replace_dc = true;
 					dsi_display->panel->dc_enable = false;
 				}
 				dsi_display->panel->crc_flag = false;
-				pr_info("fod set CRC OFF\n");
-				dsi_display_write_panel(dsi_display, &dsi_display->panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_DISP_CRC_OFF]);
-				SDE_ATRACE_END("set_crc_off");
 			}
 			if (dsi_display->panel->elvss_dimming_check_enable) {
 				rc = dsi_display_write_panel(dsi_display, &dsi_display->panel->hbm_fod_on);
 			} else {
 				rc = dsi_display_write_panel(dsi_display, &dsi_display->panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_DISP_HBM_FOD_ON]);
 			}
+			if (rc)
+				goto hbm_on_done;
+			dsi_display->panel->fod_dimlayer_hbm_enabled = true;
 			if (dsi_display->panel->fod_dimlayer_bl_block) {
 				dsi_display->panel->fod_dimlayer_bl_block = false;
 				if (0 == dsi_display->panel->last_bl_lvl)
 					dsi_display->panel->last_bl_lvl++;
-				dsi_panel_set_backlight(dsi_display->panel, dsi_display->panel->last_bl_lvl);
+				rc = dsi_panel_set_backlight(dsi_display->panel,
+					dsi_display->panel->last_bl_lvl);
 			}
 			dsi_display->panel->skip_dimmingon = STATE_DIM_BLOCK;
-			dsi_display->panel->fod_dimlayer_hbm_enabled = true;
+hbm_on_done:
 			SDE_ATRACE_END("set_hbm_on");
 			mutex_unlock(&dsi_display->panel->panel_lock);
 			if (rc) {
@@ -858,10 +841,9 @@ int sde_connector_update_hbm(struct sde_connector *c_conn)
 void sde_connector_fod_notify(struct drm_connector *conn)
 {
 	struct sde_connector *c_conn;
-	bool icon, hbm_state;
-	static bool last_icon;
-	static bool last_hbm_state;
 	struct dsi_display *dsi_display;
+	struct drm_crtc *crtc;
+	u32 ready = 0;
 
 	if (!conn) {
 		SDE_ERROR("invalid params\n");
@@ -869,39 +851,30 @@ void sde_connector_fod_notify(struct drm_connector *conn)
 	}
 
 	c_conn = to_sde_connector(conn);
-	if (c_conn->connector_type != DRM_MODE_CONNECTOR_DSI) {
-		SDE_ERROR("not DRM_MODE_CONNECTOR_DSIl\n");
+	if (c_conn->connector_type != DRM_MODE_CONNECTOR_DSI)
 		return;
-	}
 
-	dsi_display = (struct dsi_display *) c_conn->display;
+	dsi_display = c_conn->display;
 	if (!dsi_display || !dsi_display->panel) {
 		SDE_ERROR("invalid display/panel\n");
 		return;
 	}
 
-	icon = c_conn->mi_dimlayer_state.mi_dimlayer_type & MI_DIMLAYER_FOD_ICON;
-	if (last_icon != icon) {
-		if (icon) {
-			sde_crtc_fod_ui_ready(dsi_display, 2, 1);
-		} else {
-			sde_crtc_fod_ui_ready(dsi_display, 2, 0);
-		}
+	crtc = conn->state ? conn->state->crtc : NULL;
+	if (crtc && crtc->state && crtc->state->active) {
+		if (dsi_display->panel->fod_dimlayer_hbm_enabled)
+			ready |= 0x01;
+		if (c_conn->mi_dimlayer_state.mi_dimlayer_type &
+				MI_DIMLAYER_FOD_ICON)
+			ready |= 0x02;
 	}
-	last_icon = icon;
 
-	hbm_state = dsi_display->panel->fod_dimlayer_hbm_enabled;
-	if (last_hbm_state != hbm_state) {
-		if (hbm_state) {
-			sde_crtc_fod_ui_ready(dsi_display, 1, 1);
-		} else {
-			sde_crtc_fod_ui_ready(dsi_display, 1, 0);
-		}
+	/* Keep notification history per panel, including display-off commits. */
+	if (dsi_display->panel->fod_ui_ready != ready) {
+		dsi_display->panel->fod_ui_ready = ready;
+		sysfs_notify(&conn->kdev->kobj, NULL, "fod_ui_ready");
 	}
-	last_hbm_state = hbm_state;
-
 }
-
 
 int sde_connector_pre_kickoff(struct drm_connector *connector)
 {
