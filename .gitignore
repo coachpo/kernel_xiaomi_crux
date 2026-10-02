@@ -31,6 +31,7 @@
 *.o
 *.o.*
 *.order
+*.orig
 *.patch
 *.s
 *.so
