@@ -32,6 +32,9 @@ int disableGesture(u8 *mask, int size);
 int enableGesture(u8 *mask, int size);
 int enterGestureMode(int reload);
 int isAnyGestureActive(void);
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+int isGestureActive(u8 gesture_id);
+#endif
 int readGestureCoords(u8 *event);
 int getGestureCoords(u16 **x, u16 **y);
 

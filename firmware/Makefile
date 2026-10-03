@@ -20,7 +20,11 @@ fw-external-y := $(subst $(quote),,$(CONFIG_EXTRA_FIRMWARE))
 # For the former two cases we want $(fw-shipped-y) and $(fw-shipped-m) to be
 # accurate. In the latter case it doesn't matter -- it'll use $(fw-shipped-all).
 # But be aware that the config file might not be included at all.
+ifeq ($(CONFIG_MACH_XIAOMI_CRUX),y)
+fw-shipped-$(CONFIG_TOUCHSCREEN_ST_FTS_V521) += st_fts_crux.ftb st_fts_crux_f1x.ftb
+else
 fw-shipped-$(CONFIG_TOUCHSCREEN_ST_FTS_V521) += st_fts_f1.ftb
+endif
 
 fw-shipped-all := $(fw-shipped-y) $(fw-shipped-m) $(fw-shipped-)
 

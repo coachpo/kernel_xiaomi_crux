@@ -347,7 +347,12 @@ struct fts_ts_info {
 	wait_queue_head_t 	wait_queue;
 	struct completion tp_reset_completion;
 	atomic_t system_is_resetting;
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	int fod_status;
+	int aod_status;
+#else
 	unsigned int fod_status;
+#endif
 	unsigned int fod_overlap;
 	unsigned long fod_id;
 	unsigned long fod_x;
@@ -382,9 +387,15 @@ extern int fts_proc_remove(void);
 #define CENTER_X 540
 #define CENTER_Y 2005
 #define CIRCLE_R 87
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+#define FOD_LX 408
+#define FOD_LY 1873
+#define FOD_SIDE 266
+#else
 #define FOD_LX 420
 #define FOD_LY 1885
 #define FOD_SIDE 242
+#endif
 bool fts_is_infod(void);
 void fts_get_pointer(int *touch_flag, int *x, int *y);
 #endif

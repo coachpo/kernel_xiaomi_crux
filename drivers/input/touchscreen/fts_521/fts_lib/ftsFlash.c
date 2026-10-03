@@ -112,6 +112,13 @@ int getFWdata(const char *pathToFile, u8 **data, int *size)
 		from = 1;
 		path = (char *)fts_info->board->default_fw_name;
 	}
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	/* Keep legacy DT and explicit update filenames on Crux firmware. */
+	if (path && !strcmp(path, "st_fts.ftb"))
+		path = "st_fts_crux.ftb";
+	else if (path && !strcmp(path, "st_fts_f1x.ftb"))
+		path = "st_fts_crux_f1x.ftb";
+#endif
 	switch (from) {
 #ifdef FW_H_FILE
 	case 1:

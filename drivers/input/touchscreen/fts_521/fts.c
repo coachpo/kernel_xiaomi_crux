@@ -1085,6 +1085,56 @@ static ssize_t fts_gesture_mask_store(struct device *dev,
 
 #endif
 
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+static DEFINE_MUTEX(fts_double_tap_lock);
+
+static int fts_set_double_tap(struct fts_ts_info *info, bool enabled)
+{
+	u8 double_tap_mask[GESTURE_MASK_SIZE] = { 0 };
+	int res;
+
+	mutex_lock(&fts_double_tap_lock);
+	if (enabled && check_feature_feasibility(info, FEAT_SEL_GESTURE) < OK) {
+		res = -EBUSY;
+		goto out;
+	}
+
+	fromIDtoMask(GEST_ID_DBLTAP, double_tap_mask, sizeof(double_tap_mask));
+	res = updateGestureMask(double_tap_mask, sizeof(double_tap_mask),
+			       enabled ? FEAT_ENABLE : FEAT_DISABLE);
+	if (res < OK) {
+		res = -EIO;
+		goto out;
+	}
+
+	info->gesture_enabled = isAnyGestureActive();
+	res = fts_mode_handler(info, 0);
+	res = res < OK ? -EIO : 0;
+out:
+	mutex_unlock(&fts_double_tap_lock);
+	return res;
+}
+
+static ssize_t double_tap_store(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	struct fts_ts_info *info = dev_get_drvdata(dev);
+	bool enabled;
+	int res;
+
+	res = kstrtobool(buf, &enabled);
+	if (res)
+		return res;
+
+	res = fts_set_double_tap(info, enabled);
+	if (res)
+		return res;
+	return count;
+}
+
+#endif
+
 /**
  * File node to read the coordinates of the last gesture drawn by the user \n
  * cat gesture_coordinates			to obtain the gesture coordinates \n
@@ -2632,7 +2682,12 @@ static ssize_t fts_fod_status_store(struct device *dev,
 	struct fts_ts_info *info = dev_get_drvdata(dev);
 
 	logError(1, " %s %s buf:%c,count:%zu\n", tag, __func__, buf[0], count);
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	if (kstrtoint(buf, 10, &info->fod_status))
+		return -EINVAL;
+#else
 	sscanf(buf, "%u", &info->fod_status);
+#endif
 	queue_work(info->event_wq, &info->mode_handler_work);
 	logError(1, " %s %s end\n", tag, __func__);
 
@@ -2650,7 +2705,9 @@ static ssize_t fts_fod_test_store(struct device *dev,
 	sscanf(buf, "%u", &value);
 	if (value) {
 		input_report_key(info->input_dev, BTN_INFO, 1);
+#ifndef CONFIG_MACH_XIAOMI_CRUX
 		input_report_key(info->input_dev, KEY_INFO, 1);
+#endif
 		info->fod_pressed = true;
 		input_sync(info->input_dev);
 		input_mt_slot(info->input_dev, 0);
@@ -2668,7 +2725,9 @@ static ssize_t fts_fod_test_store(struct device *dev,
 		input_mt_report_slot_state(info->input_dev, MT_TOOL_FINGER, 0);
 		input_report_abs(info->input_dev, ABS_MT_TRACKING_ID, -1);
 		input_report_key(info->input_dev, BTN_INFO, 0);
+#ifndef CONFIG_MACH_XIAOMI_CRUX
 		input_report_key(info->input_dev, KEY_INFO, 0);
+#endif
 		input_sync(info->input_dev);
 	}
 	return count;
@@ -3008,11 +3067,24 @@ static DEVICE_ATTR(stylus_mode, (S_IRUGO | S_IWUSR | S_IWGRP),
 #endif
 
 #ifdef GESTURE_MODE
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+static DEVICE_ATTR_WO(double_tap);
+#endif
 static DEVICE_ATTR(gesture_mask, (S_IRUGO | S_IWUSR | S_IWGRP),
 		   fts_gesture_mask_show, fts_gesture_mask_store);
 static DEVICE_ATTR(gesture_coordinates, (S_IRUGO | S_IWUSR | S_IWGRP),
 		   fts_gesture_coordinates_show, NULL);
 #endif
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+static struct attribute *fts_touch_attrs[] = {
+#ifdef GESTURE_MODE
+	&dev_attr_double_tap.attr,
+#endif
+	NULL,
+};
+ATTRIBUTE_GROUPS(fts_touch);
+#endif
+
 static DEVICE_ATTR(doze_time, (S_IRUGO | S_IWUSR | S_IWGRP),
 		   fts_doze_time_show, fts_doze_time_store);
 static DEVICE_ATTR(grip_enable, (S_IRUGO | S_IWUSR | S_IWGRP),
@@ -3148,6 +3220,21 @@ static bool fts_is_in_fodarea(int x, int y)
 		return false;
 }
 
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+static bool fts_fingerprint_is_enable(void)
+{
+	/* -1 is initial state; 0 disables FOD; 100 means all fingers deleted. */
+	return fts_info->fod_status != 0 && fts_info->fod_status != -1 &&
+		fts_info->fod_status != 100;
+}
+
+static bool fts_need_enter_lp_mode(void)
+{
+	return fts_info->aod_status || (fts_info->fod_status != -1 &&
+		fts_info->fod_status != 100);
+}
+#endif
+
 static bool finger_report_flag;
 
 #endif
@@ -3254,21 +3341,31 @@ static void fts_enter_pointer_event_handler(struct fts_ts_info *info,
 		input_report_abs(info->input_dev, ABS_MT_DISTANCE, distance);
 		input_report_abs(info->input_dev, ABS_MT_TOUCH_MAJOR, area_size);
 #ifdef CONFIG_FTS_FOD_AREA_REPORT
-		if (fts_is_in_fodarea(x, y) && !(info->fod_id & ~(1 << touchId))) {
+		if (fts_is_in_fodarea(x, y) && !(info->fod_id & ~(1 << touchId))
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+		    && fts_fingerprint_is_enable()
+#endif
+		   ) {
 			__set_bit(touchId, &info->sleep_finger);
 			info->fod_x = x;
 			info->fod_y = y;
 			info->fod_coordinate_update = true;
 			__set_bit(touchId, &info->fod_id);
 			input_report_abs(info->input_dev, ABS_MT_WIDTH_MINOR, info->fod_overlap);
+#ifndef CONFIG_MACH_XIAOMI_CRUX
 			input_report_key(info->input_dev, BTN_INFO, 1);
+#endif
+#ifndef CONFIG_MACH_XIAOMI_CRUX
 			input_report_key(info->input_dev, KEY_INFO, 1);
+#endif
 			logError(1,	"%s  %s :  FOD Press :%d, fod_id:%08x\n", tag, __func__,
 			touchId, info->fod_id);
 		} else if (__test_and_clear_bit(touchId, &info->fod_id)) {
 			input_report_abs(info->input_dev, ABS_MT_WIDTH_MINOR, 0);
 			input_report_key(info->input_dev, BTN_INFO, 0);
+#ifndef CONFIG_MACH_XIAOMI_CRUX
 			input_report_key(info->input_dev, KEY_INFO, 0);
+#endif
 			info->fod_x = 0;
 			info->fod_y = 0;
 			info->fod_coordinate_update = false;
@@ -3391,7 +3488,9 @@ static void fts_leave_pointer_event_handler(struct fts_ts_info *info,
 	if (__test_and_clear_bit(touchId, &info->fod_id)) {
 			input_report_abs(info->input_dev, ABS_MT_WIDTH_MINOR, 0);
 			input_report_key(info->input_dev, BTN_INFO, 0);
+#ifndef CONFIG_MACH_XIAOMI_CRUX
 			input_report_key(info->input_dev, KEY_INFO, 0);
+#endif
 			info->fod_coordinate_update = false;
 			info->fod_x = 0;
 			info->fod_y = 0;
@@ -3409,7 +3508,9 @@ static void fts_leave_pointer_event_handler(struct fts_ts_info *info,
 		sysfs_notify(&info->fts_touch_dev->kobj, NULL, dev_attr_fod_state.attr.name);
 		info->fod_overlap = 0;
 		input_report_key(info->input_dev, BTN_INFO, 0);
+#ifndef CONFIG_MACH_XIAOMI_CRUX
 		input_report_key(info->input_dev, KEY_INFO, 0);
+#endif
 		finger_report_flag = false;
 #endif
 
@@ -3765,6 +3866,10 @@ static void fts_gesture_event_handler(struct fts_ts_info *info,
 		needCoords = 1;
 #ifdef CONFIG_FTS_FOD_AREA_REPORT
 		if (event[2] == GEST_ID_LONG_PRESS) {
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+			if (!fts_fingerprint_is_enable())
+				goto gesture_done;
+#endif
 			touch_area = (event[9] << 8) | (event[8]);
 			fod_overlap = (event[11] << 8) | (event[10]);
 			if ((!info->sensor_sleep && info->fod_coordinate_update &&
@@ -3778,11 +3883,20 @@ static void fts_gesture_event_handler(struct fts_ts_info *info,
 
 				if ((info->sensor_sleep && !info->sleep_finger) || !info->sensor_sleep) {
 					info->fod_pressed = true;
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+					if (info->sensor_sleep) {
+						info->fod_x = x;
+						info->fod_y = y;
+					}
+#else
 					info->fod_x = x;
 					info->fod_y = y;
+#endif
 					sysfs_notify(&info->fts_touch_dev->kobj, NULL, dev_attr_fod_state.attr.name);
 					input_report_key(info->input_dev, BTN_INFO, 1);
+#ifndef CONFIG_MACH_XIAOMI_CRUX
 					input_report_key(info->input_dev, KEY_INFO, 1);
+#endif
 					input_sync(info->input_dev);
 					if (info->fod_id) {
 						fod_id = ffs(info->fod_id) - 1;
@@ -3828,7 +3942,11 @@ static void fts_gesture_event_handler(struct fts_ts_info *info,
 #endif
 		switch (event[2]) {
 		case GEST_ID_DBLTAP:
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+			if (!isGestureActive(GEST_ID_DBLTAP))
+#else
 			if (!info->gesture_enabled)
+#endif
 				goto gesture_done;
 			value = KEY_WAKEUP;
 			logError(0, "%s %s: double tap ! \n", tag, __func__);
@@ -4709,6 +4827,17 @@ static int fts_mode_handler(struct fts_ts_info *info, int force)
 		logError(0, "%s %s: Screen OFF... \n", tag, __func__);
 
 #ifdef CONFIG_FTS_FOD_AREA_REPORT
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+		if (!fts_need_enter_lp_mode()) {
+			res = setScanMode(SCAN_MODE_ACTIVE, 0x00);
+#ifdef GESTURE_MODE
+			if (info->gesture_enabled)
+				res |= enterGestureMode(isSystemResettedDown());
+#endif
+			setSystemResetedDown(0);
+			break;
+		}
+#endif
 		logError(1, "%s %s: Sense OFF by FOD \n", tag, __func__);
 		logError(1, "%s %s,send long press and gesture cmd\n", tag, __func__);
 		res = fts_write_dma_safe(gesture_cmd, ARRAY_SIZE(gesture_cmd));
@@ -4717,7 +4846,11 @@ static int fts_mode_handler(struct fts_ts_info *info, int force)
 					 tag, __func__, res);
 		res = setScanMode(SCAN_MODE_LOW_POWER, 0);
 		res |= ret;
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+		if (isGestureActive(GEST_ID_DBLTAP)) {
+#else
 		if (info->gesture_enabled == 1) {
+#endif
 			res = fts_write_dma_safe(single_double_cmd, ARRAY_SIZE(single_double_cmd));
 		if (res < OK)
 					logError(1, "%s %s: set single and double tap delay time failed! ERROR %08X\n", tag, __func__, res);
@@ -5332,8 +5465,42 @@ static void fts_cmd_update_work(struct work_struct *work)
 	return;
 }
 
+#if defined(CONFIG_MACH_XIAOMI_CRUX) && defined(CONFIG_FTS_FOD_AREA_REPORT)
+static int fts_set_fod_status(int value)
+{
+	int res = 0;
+	u8 gesture_cmd[6] = {0xA2, 0x03, 0x20, 0x00, 0x00, 0x01};
+
+	fts_info->fod_status = value;
+	if (fts_info->fod_status == 2) {
+		mutex_lock(&fts_info->fod_mutex);
+		res = fts_write(gesture_cmd, ARRAY_SIZE(gesture_cmd));
+		if (res < OK)
+			logError(1, "%s %s: enter gesture and longpress failed! ERROR %08X recovery in senseOff...\n",
+			tag, __func__, res);
+		else
+			logError(1, "%s %s send gesture and longpress cmd success\n", tag, __func__);
+		mutex_unlock(&fts_info->fod_mutex);
+	}
+	return res;
+}
+
+static int fts_set_aod_status(int value)
+{
+	fts_info->aod_status = value;
+	return 0;
+}
+
+#endif
+
 static int fts_set_cur_value(int mode, int value)
 {
+#if defined(CONFIG_MACH_XIAOMI_CRUX) && defined(CONFIG_FTS_FOD_AREA_REPORT)
+	if (mode == Touch_Fod_Enable && fts_info && value >= 0)
+		return fts_set_fod_status(value);
+	if (mode == Touch_Aod_Enable && fts_info && value >= 0)
+		return fts_set_aod_status(value);
+#endif
 
 	if (mode < Touch_Mode_NUM && mode >= 0) {
 
@@ -5578,6 +5745,9 @@ static void fts_suspend_work(struct work_struct *work)
 
 	info->sensor_sleep = true;
 
+#if defined(CONFIG_MACH_XIAOMI_CRUX) && defined(CONFIG_FTS_FOD_AREA_REPORT)
+	if (info->gesture_enabled || fts_need_enter_lp_mode())
+#endif
 	fts_enableInterrupt();
 #ifdef CONFIG_FTS_TOUCH_COUNT_DUMP
 	sysfs_notify(&fts_info->fts_touch_dev->kobj, NULL,
@@ -6017,15 +6187,22 @@ static void fts_switch_mode_work(struct work_struct *work)
 
 	struct fts_ts_info *info = ms->info;
 	unsigned char value = ms->mode;
+#ifndef CONFIG_MACH_XIAOMI_CRUX
 	static const char *fts_gesture_on = "01 20";
 	char *gesture_result;
 	int size = 6 * 2 + 1;
 	char ch[16] = { 0x0, };
+#endif
 
 	logError(1, "%s %s mode:%d\n", tag, __func__, value);
 
 	if (value >= INPUT_EVENT_WAKUP_MODE_OFF
 	    && value <= INPUT_EVENT_WAKUP_MODE_ON) {
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+		if (fts_set_double_tap(info, value == INPUT_EVENT_WAKUP_MODE_ON))
+			logError(1, "%s %s: cannot update double tap mode\n",
+				 tag, __func__);
+#else
 		info->gesture_enabled = value - INPUT_EVENT_WAKUP_MODE_OFF;
 		if (info->gesture_enabled) {
 			gesture_result = (u8 *) kzalloc(size, GFP_KERNEL);
@@ -6047,6 +6224,7 @@ static void fts_switch_mode_work(struct work_struct *work)
 		snprintf(ch, sizeof(ch), "%s",
 			 (value -
 			  INPUT_EVENT_WAKUP_MODE_OFF) ? "enabled" : "disabled");
+#endif
 	} else if (value >= INPUT_EVENT_COVER_MODE_OFF
 		   && value <= INPUT_EVENT_COVER_MODE_ON) {
 		info->glove_enabled = value - INPUT_EVENT_COVER_MODE_OFF;
@@ -6688,6 +6866,15 @@ static int fts_probe(struct spi_device *client)
 		goto ProbeErrorExit_0;
 	}
 
+#if defined(CONFIG_MACH_XIAOMI_CRUX) && defined(CONFIG_FTS_FOD_AREA_REPORT)
+	mutex_init(&info->fod_mutex);
+#ifdef CONFIG_FACTORY_BUILD
+	info->fod_status = 1;
+#else
+	info->fod_status = -1;
+#endif
+#endif
+
 	fts_info = info;
 	info->client = client;
 	info->dev = &info->client->dev;
@@ -6869,7 +7056,9 @@ static int fts_probe(struct spi_device *client)
 #endif
 #ifdef CONFIG_FTS_FOD_AREA_REPORT
 	input_set_capability(info->input_dev, EV_KEY, BTN_INFO);
+#ifndef CONFIG_MACH_XIAOMI_CRUX
 	input_set_capability(info->input_dev, EV_KEY, KEY_INFO);
+#endif
 	input_set_capability(info->input_dev, EV_KEY, KEY_GOTO);
 #endif
 	mutex_init(&(info->input_report_mutex));
@@ -7034,10 +7223,24 @@ static int fts_probe(struct spi_device *client)
 #else
 		info->fts_tp_class = class_create(THIS_MODULE, "touch");
 #endif
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	if (IS_ERR_OR_NULL(info->fts_tp_class)) {
+		error = info->fts_tp_class ? PTR_ERR(info->fts_tp_class) : -ENODEV;
+		info->fts_tp_class = NULL;
+		goto ProbeErrorExit_7;
+	}
+	info->fts_touch_dev = device_create_with_groups(info->fts_tp_class,
+				NULL, 0x49, info, fts_touch_groups, "tp_dev");
+#else
 	info->fts_touch_dev =
 	    device_create(info->fts_tp_class, NULL, 0x49, info, "tp_dev");
+#endif
 
 	if (IS_ERR(info->fts_touch_dev)) {
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+		error = PTR_ERR(info->fts_touch_dev);
+		info->fts_touch_dev = NULL;
+#endif
 		logError(1,
 			 "%s ERROR: Failed to create device for the sysfs!\n",
 			 tag);
@@ -7056,7 +7259,9 @@ static int fts_probe(struct spi_device *client)
 	}
 #endif
 #ifdef CONFIG_FTS_FOD_AREA_REPORT
+#ifndef CONFIG_MACH_XIAOMI_CRUX
 	mutex_init(&(info->fod_mutex));
+#endif
 
 	error =
 	    sysfs_create_file(&info->fts_touch_dev->kobj,
@@ -7112,20 +7317,36 @@ static int fts_probe(struct spi_device *client)
 	logError(1, "%s Probe Finished! \n", tag);
 	return OK;
 ProbeErrorExit_8:
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	if (info->fts_touch_dev)
+		device_unregister(info->fts_touch_dev);
+#ifndef CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE
+	class_destroy(info->fts_tp_class);
+#endif
+#else
 	device_destroy(info->fts_tp_class, 0x49);
 	class_destroy(info->fts_tp_class);
+#endif
 	info->fts_tp_class = NULL;
 ProbeErrorExit_7:
 #ifdef CONFIG_SECURE_TOUCH
 	fts_secure_remove(info);
 #endif
 #ifdef CONFIG_I2C_BY_DMA
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	if (info->dma_buf) {
+		kfree(info->dma_buf->rdBuf);
+		kfree(info->dma_buf->wrBuf);
+		kfree(info->dma_buf);
+	}
+#else
 	if (info->dma_buf)
 		kfree(info->dma_buf);
 	if (info->dma_buf->rdBuf)
 		kfree(info->dma_buf->rdBuf);
 	if (info->dma_buf->wrBuf)
 		kfree(info->dma_buf->wrBuf);
+#endif
 #endif
 #ifdef CONFIG_DRM
 	msm_drm_unregister_client(&info->notifier);
@@ -7169,10 +7390,19 @@ static int fts_remove(struct spi_device *client)
 #endif
 
 	struct fts_ts_info *info = dev_get_drvdata(&(client->dev));
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	struct device *touch_dev = get_device(info->fts_touch_dev);
+#endif
 
 	fts_proc_remove();
 	/* sysfs stuff */
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	/* Quiesce sysfs while queued suspend notifications retain the device. */
+	device_unregister(info->fts_touch_dev);
+	sysfs_remove_group(&info->input_dev->dev.kobj, &info->attrs);
+#else
 	sysfs_remove_group(&client->dev.kobj, &info->attrs);
+#endif
 	/* remove interrupt and event handlers */
 	fts_interrupt_uninstall(info);
 #ifdef CONFIG_DRM
@@ -7195,12 +7425,21 @@ static int fts_remove(struct spi_device *client)
 		kfree(info->current_clicknum_file);
 		info->current_clicknum_file = NULL;
 	}
+#ifndef CONFIG_MACH_XIAOMI_CRUX
 	sysfs_remove_file(&info->fts_touch_dev->kobj,
 			  &dev_attr_touch_suspend_notify.attr);
 #endif
+#endif
 
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	put_device(touch_dev);
+#ifndef CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE
+	class_destroy(info->fts_tp_class);
+#endif
+#else
 	device_destroy(info->fts_tp_class, DCHIP_ID_0);
 	class_destroy(info->fts_tp_class);
+#endif
 	info->fts_tp_class = NULL;
 
 	fts_enable_reg(info, false);

@@ -37,7 +37,11 @@
 #ifdef FW_H_FILE
 #define PATH_FILE_FW			"NULL"
 #else
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+#define PATH_FILE_FW			"st_fts_crux.ftb"
+#else
 #define PATH_FILE_FW			"st_fts.ftb"	/*new FW bin file name*/
+#endif
 #endif
 
 #define FLASH_CHUNK			(64 * 1024)			/*Max number of bytes that the DMA can burn on the flash in one shot in FTI*/
