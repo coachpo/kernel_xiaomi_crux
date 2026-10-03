@@ -423,6 +423,9 @@ struct sde_crtc_state {
 	uint32_t num_dim_layers;
 	struct sde_hw_dim_layer dim_layer[SDE_MAX_DIM_LAYERS];
 	struct sde_hw_dim_layer *fod_dim_layer;
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	u32 crux_fod_plane_sync_info;
+#endif
 	uint32_t num_ds;
 	uint32_t num_ds_enabled;
 	bool ds_dirty;

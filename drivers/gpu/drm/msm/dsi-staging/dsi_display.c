@@ -5264,6 +5264,10 @@ static ssize_t sysfs_hbm_write(struct device *dev,
 		return -EINVAL;
 
 	ret = kstrtoint(buf, 10, &hbm_mode);
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	if (!ret && (hbm_mode < 0 || hbm_mode > 1))
+		return -EINVAL;
+#endif
 	if (ret) {
 		pr_err("kstrtoint failed. ret=%d\n", ret);
 		return ret;
@@ -5323,8 +5327,10 @@ static struct attribute *display_fs_attrs[] = {
 	&dev_attr_doze_status.attr,
 	&dev_attr_doze_mode.attr,
 	&dev_attr_fod_ui.attr,
+#ifndef CONFIG_MACH_XIAOMI_CRUX
 	&dev_attr_dimlayer_bl.attr,
 	&dev_attr_dimlayer_hbm.attr,
+#endif
 	&dev_attr_fod_hbm_en.attr,
 	&dev_attr_hbm.attr,
 	NULL,

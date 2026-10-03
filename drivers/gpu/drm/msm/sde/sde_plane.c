@@ -4880,7 +4880,11 @@ static int sde_plane_atomic_set_property(struct drm_plane *plane,
 		if (idx == PLANE_PROP_ZPOS) {
 			if (val & FOD_PRESSED_LAYER_ZORDER) {
 				val &= ~FOD_PRESSED_LAYER_ZORDER;
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+				fod_val = 2;
+#else
 				fod_val = 1;
+#endif
 			}
 
 			fod_property = psde->property_info.

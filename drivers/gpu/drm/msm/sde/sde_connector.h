@@ -908,4 +908,8 @@ int sde_connector_get_panel_vfp(struct drm_connector *connector,
  */
 int sde_connector_esd_status(struct drm_connector *connector);
 
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+void sde_connector_crux_fod_notify(struct drm_connector *connector);
+#endif
+
 #endif /* _SDE_CONNECTOR_H_ */

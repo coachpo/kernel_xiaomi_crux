@@ -5364,6 +5364,21 @@ static void sde_crtc_fod_atomic_check(struct sde_crtc_state *cstate,
 	int fod_layer_index = -1;
 	int plane_idx;
 	int zpos = INT_MAX;
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	int fod;
+
+	/* PE13 supplies its dim layers; the plane marker synchronizes HBM/UI. */
+	cstate->crux_fod_plane_sync_info = 0;
+	cstate->fod_dim_layer = NULL;
+	for (plane_idx = 0; plane_idx < cnt; plane_idx++) {
+		fod = sde_plane_is_fod_layer(pstates[plane_idx].drm_pstate);
+		if (fod == 1)
+			cstate->crux_fod_plane_sync_info |= BIT(1);
+		else if (fod == 2)
+			cstate->crux_fod_plane_sync_info |= BIT(0) | BIT(1);
+	}
+	return;
+#endif
 
 	for (plane_idx = 0; plane_idx < cnt; plane_idx++) {
 		if (sde_plane_is_fod_layer(pstates[plane_idx].drm_pstate)) {
@@ -5443,6 +5458,10 @@ static int sde_crtc_atomic_check(struct drm_crtc *crtc,
 		return -EINVAL;
 	}
 
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	cstate->crux_fod_plane_sync_info = 0;
+	cstate->fod_dim_layer = NULL;
+#endif
 	if (!state->enable || !state->active) {
 		SDE_DEBUG("crtc%d -> enable %d, active %d, skip atomic_check\n",
 				crtc->base.id, state->enable, state->active);

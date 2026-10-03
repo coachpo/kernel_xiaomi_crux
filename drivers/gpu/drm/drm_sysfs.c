@@ -234,11 +234,99 @@ static DEVICE_ATTR_RO(enabled);
 static DEVICE_ATTR_RO(dpms);
 static DEVICE_ATTR_RO(modes);
 
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+static ssize_t dim_layer_enable_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	int enabled = drm_crux_get_fod_dimlayer(to_drm_connector(dev));
+
+	if (enabled < 0)
+		return enabled;
+	return snprintf(buf, PAGE_SIZE, "%s\n", enabled ? "enabled" : "disabled");
+}
+
+static ssize_t dim_layer_enable_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	bool enabled;
+	int rc;
+
+	rc = kstrtobool(buf, &enabled);
+	if (rc)
+		return rc;
+	rc = drm_crux_set_fod_dimlayer(to_drm_connector(dev), enabled);
+	return rc ? rc : count;
+}
+
+static ssize_t fod_ui_ready_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	int ready = drm_crux_get_fod_ui_ready(to_drm_connector(dev));
+
+	return ready < 0 ? ready : snprintf(buf, PAGE_SIZE, "%d\n", ready);
+}
+
+static ssize_t doze_backlight_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	int value = drm_crux_get_doze_backlight(to_drm_connector(dev));
+
+	return value < 0 ? value : snprintf(buf, PAGE_SIZE, "%d\n", value);
+}
+
+static ssize_t doze_backlight_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	u32 value;
+	int rc = kstrtou32(buf, 0, &value);
+
+	if (!rc)
+		rc = drm_crux_set_doze_backlight(to_drm_connector(dev), value);
+	return rc ? rc : count;
+}
+
+static ssize_t disp_param_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	u32 param;
+	int rc = kstrtou32(buf, 0, &param);
+
+	if (!rc)
+		rc = drm_crux_set_disp_param(to_drm_connector(dev), param);
+	return rc ? rc : count;
+}
+
+static DEVICE_ATTR_RW(dim_layer_enable);
+static DEVICE_ATTR_RW(doze_backlight);
+static DEVICE_ATTR(disp_param, 0644, NULL, disp_param_store);
+static DEVICE_ATTR_RO(fod_ui_ready);
+
+static umode_t crux_connector_attr_visible(struct kobject *kobj,
+		struct attribute *attr, int index)
+{
+	struct drm_connector *conn = to_drm_connector(kobj_to_dev(kobj));
+
+	if ((attr == &dev_attr_dim_layer_enable.attr ||
+		attr == &dev_attr_fod_ui_ready.attr ||
+		attr == &dev_attr_doze_backlight.attr ||
+		attr == &dev_attr_disp_param.attr) &&
+		conn->connector_type != DRM_MODE_CONNECTOR_DSI)
+		return 0;
+	return attr->mode;
+}
+#endif
+
 static struct attribute *connector_dev_attrs[] = {
 	&dev_attr_status.attr,
 	&dev_attr_enabled.attr,
 	&dev_attr_dpms.attr,
 	&dev_attr_modes.attr,
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	&dev_attr_dim_layer_enable.attr,
+	&dev_attr_fod_ui_ready.attr,
+	&dev_attr_doze_backlight.attr,
+	&dev_attr_disp_param.attr,
+#endif
 	NULL
 };
 
@@ -255,6 +343,9 @@ static struct bin_attribute *connector_bin_attrs[] = {
 };
 
 static const struct attribute_group connector_dev_group = {
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	.is_visible = crux_connector_attr_visible,
+#endif
 	.attrs = connector_dev_attrs,
 	.bin_attrs = connector_bin_attrs,
 };

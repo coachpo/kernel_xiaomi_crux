@@ -759,6 +759,25 @@ extern bool is_fod_hbm_enabled;
 extern bool is_dimlayer_bl_enable;
 int dsi_panel_update_doze(struct dsi_panel *panel) {
 	int rc = 0;
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	bool hbm;
+
+	if (panel->doze_enabled) {
+		/* AOD requests are deferred while the fingerprint light is on. */
+		if (panel->crux_fod_hbm_enabled)
+			return 0;
+		return dsi_panel_tx_cmd_set(panel, panel->doze_mode == DSI_DOZE_HBM ?
+			DSI_CMD_SET_DOZE_HBM : DSI_CMD_SET_DOZE_LBM);
+	}
+	hbm = panel->crux_fod_hbm_enabled || panel->crux_fod_hbm_requested;
+	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_NOLP);
+	if (rc)
+		return rc;
+	panel->crux_fod_hbm_enabled = false;
+	if (hbm)
+		return dsi_panel_set_fod_hbm(panel, true);
+	return dsi_panel_set_backlight(panel, panel->bl_config.bl_level);
+#endif
 
 	if (panel->doze_enabled && panel->doze_mode == DSI_DOZE_HBM) {
 		dsi_panel_set_dimlayer_bl_backlight(panel, false);
@@ -809,6 +828,35 @@ extern bool is_fod_hbm_enabled;
 int dsi_panel_set_fod_hbm(struct dsi_panel *panel, bool status)
 {
 	int rc = 0;
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	enum dsi_cmd_set_type type;
+
+	if (panel->crux_fod_hbm_enabled == status)
+		return 0;
+	if (!panel->panel_initialized || !panel->cur_mode ||
+		!panel->cur_mode->priv_info)
+		return -EINVAL;
+
+	if (status)
+		type = DSI_CMD_SET_DISP_HBM_FOD_ON;
+	else if (panel->doze_enabled)
+		type = panel->doze_mode == DSI_DOZE_HBM ?
+			DSI_CMD_SET_DISP_HBM_FOD_OFF_DOZE_HBM_ON :
+			DSI_CMD_SET_DISP_HBM_FOD_OFF_DOZE_LBM_ON;
+	else
+		type = DSI_CMD_SET_DISP_HBM_FOD_OFF;
+
+	if (!panel->cur_mode->priv_info->cmd_sets[type].count)
+		return -EOPNOTSUPP;
+	rc = dsi_panel_tx_cmd_set(panel, type);
+	if (!rc) {
+		panel->crux_fod_hbm_enabled = status;
+		if (!status && !panel->doze_enabled)
+			rc = dsi_panel_set_backlight(panel,
+				panel->bl_config.bl_level);
+	}
+	return rc;
+#endif
 
 	if (status) {
 		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_DISP_HBM_FOD_ON);
@@ -826,6 +874,41 @@ int dsi_panel_set_fod_hbm(struct dsi_panel *panel, bool status)
 
 	return rc;
 }
+
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+int dsi_panel_crux_disp_param(struct dsi_panel *panel, u32 param)
+{
+	int rc;
+
+	if (!panel->panel_initialized || !panel->cur_mode ||
+		!panel->cur_mode->priv_info)
+		return -EINVAL;
+	switch (param) {
+	case 0x20000:
+		rc = dsi_panel_set_fod_hbm(panel, true);
+		if (!rc)
+			panel->crux_fod_hbm_requested = true;
+		return rc;
+	case 0xe0000:
+		rc = dsi_panel_set_fod_hbm(panel, false);
+		if (!rc)
+			panel->crux_fod_hbm_requested = false;
+		return rc;
+	case 0xf0000:
+		/* Goodix uses HBM_OFF, whose panel payload differs from FOD_OFF. */
+		if (!panel->cur_mode->priv_info->cmd_sets[DSI_CMD_SET_CRUX_HBM_OFF].count)
+			return -EOPNOTSUPP;
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_CRUX_HBM_OFF);
+		if (!rc) {
+			panel->crux_fod_hbm_enabled = false;
+			panel->crux_fod_hbm_requested = false;
+		}
+		return rc;
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+#endif
 
 int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
 {
@@ -1912,6 +1995,12 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-doze-lbm-command",
 	"qcom,mdss-dsi-dispparam-hbm-fod-on-command",
 	"qcom,mdss-dsi-dispparam-hbm-fod-off-command",
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	"qcom,mdss-dsi-dispparam-hbm-fod-off-doze-hbm-on-command",
+	"qcom,mdss-dsi-dispparam-hbm-fod-off-doze-lbm-on-command",
+	"qcom,mdss-dsi-dispparam-hbm-on-command",
+	"qcom,mdss-dsi-dispparam-hbm-off-command",
+#endif
 };
 
 const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
@@ -1942,6 +2031,12 @@ const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-doze-lbm-command-state",
 	"qcom,mdss-dsi-dispparam-hbm-fod-on-command-state",
 	"qcom,mdss-dsi-dispparam-hbm-fod-off-command-state",
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	"qcom,mdss-dsi-dispparam-hbm-fod-off-doze-hbm-on-command-state",
+	"qcom,mdss-dsi-dispparam-hbm-fod-off-doze-lbm-on-command-state",
+	"qcom,mdss-dsi-dispparam-hbm-on-command-state",
+	"qcom,mdss-dsi-dispparam-hbm-off-command-state",
+#endif
 };
 
 static int dsi_panel_get_cmd_pkt_count(const char *data, u32 length, u32 *cnt)
@@ -4710,6 +4805,10 @@ int dsi_panel_disable(struct dsi_panel *panel)
 	panel->panel_initialized = false;
 	panel->power_mode = SDE_MODE_DPMS_OFF;
 	panel->doze_enabled = false;
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	panel->crux_fod_hbm_enabled = false;
+	panel->crux_fod_hbm_requested = false;
+#endif
 
 	mutex_unlock(&panel->panel_lock);
 	return rc;
@@ -4773,8 +4872,13 @@ error:
 int dsi_panel_apply_hbm_mode(struct dsi_panel *panel)
 {
 	static const enum dsi_cmd_set_type type_map[] = {
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+		DSI_CMD_SET_CRUX_HBM_OFF,
+		DSI_CMD_SET_CRUX_HBM_ON
+#else
 		DSI_CMD_SET_DISP_HBM_FOD_OFF,
 		DSI_CMD_SET_DISP_HBM_FOD_ON
+#endif
 	};
 
 	enum dsi_cmd_set_type type;

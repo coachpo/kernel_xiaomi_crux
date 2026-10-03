@@ -23,6 +23,7 @@
 #include "dsi_display.h"
 #include "sde_crtc.h"
 #include "sde_rm.h"
+#include <drm/drm_sysfs.h>
 
 #define BL_NODE_NAME_SIZE 32
 
@@ -583,6 +584,164 @@ static int _sde_connector_update_dirty_properties(
 	return 0;
 }
 
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+static struct dsi_panel *sde_connector_crux_panel(struct drm_connector *conn)
+{
+	struct sde_connector *c_conn;
+	struct dsi_display *display;
+
+	if (!conn || conn->connector_type != DRM_MODE_CONNECTOR_DSI)
+		return NULL;
+	c_conn = to_sde_connector(conn);
+	display = c_conn->display;
+	return display ? display->panel : NULL;
+}
+
+int drm_crux_set_fod_dimlayer(struct drm_connector *conn, bool enabled)
+{
+	struct dsi_panel *panel = sde_connector_crux_panel(conn);
+
+	if (!panel)
+		return -ENODEV;
+	WRITE_ONCE(panel->crux_fod_dimlayer_enabled, enabled);
+	return 0;
+}
+EXPORT_SYMBOL(drm_crux_set_fod_dimlayer);
+
+int drm_crux_get_fod_dimlayer(struct drm_connector *conn)
+{
+	struct dsi_panel *panel = sde_connector_crux_panel(conn);
+
+	return panel ? READ_ONCE(panel->crux_fod_dimlayer_enabled) : -ENODEV;
+}
+EXPORT_SYMBOL(drm_crux_get_fod_dimlayer);
+
+int drm_crux_get_fod_ui_ready(struct drm_connector *conn)
+{
+	struct dsi_panel *panel = sde_connector_crux_panel(conn);
+
+	return panel ? READ_ONCE(panel->crux_fod_ui_ready) : -ENODEV;
+}
+EXPORT_SYMBOL(drm_crux_get_fod_ui_ready);
+
+int drm_crux_get_doze_backlight(struct drm_connector *conn)
+{
+	struct dsi_panel *panel = sde_connector_crux_panel(conn);
+
+	return panel ? READ_ONCE(panel->crux_doze_brightness) : -ENODEV;
+}
+EXPORT_SYMBOL(drm_crux_get_doze_backlight);
+
+int drm_crux_set_doze_backlight(struct drm_connector *conn, u32 value)
+{
+	struct dsi_panel *panel = sde_connector_crux_panel(conn);
+	struct sde_connector *c_conn;
+	struct dsi_display *display;
+	int rc = 0, clk_rc;
+
+	if (!panel)
+		return -ENODEV;
+	if (value > 2)
+		return -EINVAL;
+	c_conn = to_sde_connector(conn);
+	display = c_conn->display;
+	mutex_lock(&display->display_lock);
+	mutex_lock(&panel->panel_lock);
+	panel->crux_doze_brightness = value;
+	if (value)
+		panel->doze_mode = value == 1 ? DSI_DOZE_HBM : DSI_DOZE_LPM;
+	if (!value || !panel->panel_initialized || !panel->doze_enabled ||
+		panel->crux_fod_hbm_enabled)
+		goto out;
+	rc = dsi_display_clk_ctrl(display->dsi_clk_handle,
+		DSI_CORE_CLK, DSI_CLK_ON);
+	if (rc)
+		goto out;
+	rc = dsi_panel_update_doze(panel);
+	clk_rc = dsi_display_clk_ctrl(display->dsi_clk_handle,
+		DSI_CORE_CLK, DSI_CLK_OFF);
+	if (!rc)
+		rc = clk_rc;
+out:
+	mutex_unlock(&panel->panel_lock);
+	mutex_unlock(&display->display_lock);
+	return rc;
+}
+EXPORT_SYMBOL(drm_crux_set_doze_backlight);
+
+int drm_crux_set_disp_param(struct drm_connector *conn, u32 param)
+{
+	struct dsi_panel *panel = sde_connector_crux_panel(conn);
+	struct sde_connector *c_conn;
+	struct dsi_display *display;
+	int rc, clk_rc;
+
+	if (!panel)
+		return -ENODEV;
+	c_conn = to_sde_connector(conn);
+	display = c_conn->display;
+	mutex_lock(&display->display_lock);
+	mutex_lock(&panel->panel_lock);
+	rc = dsi_display_clk_ctrl(display->dsi_clk_handle,
+		DSI_CORE_CLK, DSI_CLK_ON);
+	if (!rc) {
+		rc = dsi_panel_crux_disp_param(panel, param);
+		clk_rc = dsi_display_clk_ctrl(display->dsi_clk_handle,
+			DSI_CORE_CLK, DSI_CLK_OFF);
+		if (!rc)
+			rc = clk_rc;
+	}
+	mutex_unlock(&panel->panel_lock);
+	mutex_unlock(&display->display_lock);
+	if (!rc)
+		sde_connector_crux_fod_notify(conn);
+	return rc;
+}
+EXPORT_SYMBOL(drm_crux_set_disp_param);
+
+static int sde_connector_crux_update_fod_hbm(struct drm_connector *conn)
+{
+	struct dsi_panel *panel = sde_connector_crux_panel(conn);
+	struct drm_crtc *crtc = conn->state ? conn->state->crtc : NULL;
+	struct sde_crtc_state *cstate;
+	bool enabled;
+	int rc;
+
+	if (!panel || !crtc || !crtc->state)
+		return 0;
+	cstate = to_sde_crtc_state(crtc->state);
+	mutex_lock(&panel->panel_lock);
+	enabled = panel->crux_fod_hbm_requested ||
+		(READ_ONCE(panel->crux_fod_dimlayer_enabled) &&
+		(cstate->crux_fod_plane_sync_info & BIT(0)));
+	rc = dsi_panel_set_fod_hbm(panel, enabled);
+	mutex_unlock(&panel->panel_lock);
+	return rc;
+}
+
+void sde_connector_crux_fod_notify(struct drm_connector *conn)
+{
+	struct dsi_panel *panel = sde_connector_crux_panel(conn);
+	struct drm_crtc *crtc = conn->state ? conn->state->crtc : NULL;
+	struct sde_crtc_state *cstate;
+	u32 ready = 0;
+
+	if (!panel || !conn->kdev)
+		return;
+	if (crtc && crtc->state && crtc->state->active) {
+		cstate = to_sde_crtc_state(crtc->state);
+		if (panel->crux_fod_hbm_enabled)
+			ready |= BIT(0);
+		if (cstate->crux_fod_plane_sync_info & BIT(1))
+			ready |= BIT(1);
+	}
+	if (READ_ONCE(panel->crux_fod_ui_ready) != ready) {
+		WRITE_ONCE(panel->crux_fod_ui_ready, ready);
+		sysfs_notify(&conn->kdev->kobj, NULL, "fod_ui_ready");
+	}
+}
+#endif
+
 extern bool is_dimlayer_hbm_enabled;
 extern bool is_dimlayer_bl_enable;
 bool last_dimlayer_hbm_enabled;
@@ -677,7 +836,13 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
 
 	SDE_EVT32_VERBOSE(connector->base.id);
 
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	rc = sde_connector_crux_update_fod_hbm(connector);
+	if (rc)
+		goto end;
+#else
 	sde_connector_update_fod_hbm(connector);
+#endif
 
 	rc = c_conn->ops.pre_kickoff(connector, c_conn->display, &params);
 

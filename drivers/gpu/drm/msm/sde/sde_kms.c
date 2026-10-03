@@ -1260,6 +1260,10 @@ static void sde_kms_complete_commit(struct msm_kms *kms,
 		}
 	}
 
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	for_each_connector_in_state(old_state, connector, old_conn_state, i)
+		sde_connector_crux_fod_notify(connector);
+#endif
 	_sde_kms_drm_check_dpms(old_state, MSM_DRM_EVENT_BLANK);
 
 	sde_power_resource_enable(&priv->phandle, sde_kms->core_client, false);
