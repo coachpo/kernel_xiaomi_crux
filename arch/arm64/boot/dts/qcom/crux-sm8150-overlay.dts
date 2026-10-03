@@ -23,10 +23,19 @@
 #include "sdx5xm-external-soc.dtsi"
 #include "sm8150-sdx50m.dtsi"
 
+/* Keep crash logs clear of the PIL buffer and the U-Boot heap. */
+&ramoops {
+	reg = <0x0 0xb0000000 0x0 0x00400000>;
+	record-size = <0x00100000>;
+	console-size = <0x00200000>;
+	pmsg-size = <0x00100000>;
+	ftrace-size = <0>;
+	ecc-size = <0>;
+};
+
 / {
 	model = "SDX50M CRUX";
 	compatible = "qcom,sm8150-mtp", "qcom,sm8150", "qcom,mtp";
 	qcom,board-id = <0x2B 0x1>;
 
 };
-
