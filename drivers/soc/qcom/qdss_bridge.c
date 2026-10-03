@@ -205,10 +205,9 @@ static void qdss_buf_tbl_remove(struct qdss_bridge_drvdata *drvdata,
 	pr_err_ratelimited("Failed to find buffer for removal\n");
 }
 
-static void mhi_ch_close(struct qdss_bridge_drvdata *drvdata)
+static void mhi_ch_cleanup(struct qdss_bridge_drvdata *drvdata)
 {
 	if (drvdata->mode == MHI_TRANSFER_TYPE_USB) {
-		flush_workqueue(drvdata->mhi_wq);
 		qdss_destroy_buf_tbl(drvdata);
 		qdss_destroy_read_done_list(drvdata);
 	} else if (drvdata->mode == MHI_TRANSFER_TYPE_UCI) {
@@ -216,6 +215,13 @@ static void mhi_ch_close(struct qdss_bridge_drvdata *drvdata)
 		drvdata->cur_buf = NULL;
 		qdss_destroy_read_done_list(drvdata);
 	}
+}
+
+static void mhi_ch_close(struct qdss_bridge_drvdata *drvdata)
+{
+	if (drvdata->mhi_wq)
+		flush_workqueue(drvdata->mhi_wq);
+	mhi_ch_cleanup(drvdata);
 }
 
 static ssize_t mhi_show_transfer_mode(struct device *dev,
@@ -468,6 +474,11 @@ static int mhi_ch_open(struct qdss_bridge_drvdata *drvdata)
 	int ret;
 
 	spin_lock_bh(&drvdata->lock);
+	/* A queued USB open may outlive a transfer-mode change. */
+	if (drvdata->mode != MHI_TRANSFER_TYPE_USB) {
+		spin_unlock_bh(&drvdata->lock);
+		return -EOPNOTSUPP;
+	}
 	if (drvdata->opened == ENABLE) {
 		spin_unlock_bh(&drvdata->lock);
 		return 0;
@@ -488,7 +499,8 @@ static int mhi_ch_open(struct qdss_bridge_drvdata *drvdata)
 	return 0;
 err:
 	spin_lock_bh(&drvdata->lock);
-	drvdata->opened = DISABLE;
+	if (drvdata->opened == ENABLE)
+		drvdata->opened = DISABLE;
 	spin_unlock_bh(&drvdata->lock);
 	return ret;
 }
@@ -499,6 +511,8 @@ static void qdss_bridge_open_work_fn(struct work_struct *work)
 				container_of(work,
 					     struct qdss_bridge_drvdata,
 					     open_work);
+	struct usb_qdss_ch *usb_ch;
+	bool cleanup;
 	int ret;
 
 	ret = mhi_ch_open(drvdata);
@@ -509,16 +523,40 @@ static void qdss_bridge_open_work_fn(struct work_struct *work)
 	if (ret)
 		goto err;
 
-	drvdata->usb_ch = usb_qdss_open("qdss_mdm", drvdata, usb_notifier);
-	if (IS_ERR_OR_NULL(drvdata->usb_ch)) {
-		ret = PTR_ERR(drvdata->usb_ch);
+	usb_ch = usb_qdss_open("qdss_mdm", drvdata, usb_notifier);
+	if (IS_ERR_OR_NULL(usb_ch)) {
+		ret = usb_ch ? PTR_ERR(usb_ch) : -ENODEV;
 		goto err;
 	}
 
+	spin_lock_bh(&drvdata->lock);
+	if (drvdata->opened != ENABLE) {
+		spin_unlock_bh(&drvdata->lock);
+		usb_qdss_close(usb_ch);
+		ret = -ESHUTDOWN;
+		goto err;
+	}
+	drvdata->usb_ch = usb_ch;
+	spin_unlock_bh(&drvdata->lock);
 	return;
 err:
+	spin_lock_bh(&drvdata->lock);
+	cleanup = drvdata->opened == ENABLE;
+	if (cleanup) {
+		/* Keep new opens and mode changes out until buffers are released. */
+		drvdata->opened = CLOSING;
+		drvdata->usb_ch = NULL;
+	}
+	spin_unlock_bh(&drvdata->lock);
 	mhi_unprepare_from_transfer(drvdata->mhi_dev);
-	mhi_ch_close(drvdata);
+	/* open_work cannot flush its own queue; external close drains it. */
+	if (cleanup) {
+		mhi_ch_cleanup(drvdata);
+		spin_lock_bh(&drvdata->lock);
+		if (drvdata->opened == CLOSING)
+			drvdata->opened = DISABLE;
+		spin_unlock_bh(&drvdata->lock);
+	}
 err_open:
 	pr_err("Open work failed with err:%d\n", ret);
 }
@@ -811,9 +849,12 @@ static void qdss_mhi_remove(struct mhi_device *mhi_dev)
 				msleep(20);
 			} while (qdss_check_entry(drvdata));
 		}
-		mhi_ch_close(drvdata);
-	} else
+	} else {
+		drvdata->opened = SSR;
 		spin_unlock_bh(&drvdata->lock);
+	}
+	/* Error/disabled state may still have open_work running or queued. */
+	mhi_ch_close(drvdata);
 
 	device_remove_file(drvdata->dev, &dev_attr_mode);
 	device_destroy(mhi_class, drvdata->cdev.dev);

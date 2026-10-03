@@ -35,6 +35,7 @@ enum open_status {
 	DISABLE,
 	ENABLE,
 	SSR,
+	CLOSING,
 };
 
 struct qdss_bridge_drvdata {
