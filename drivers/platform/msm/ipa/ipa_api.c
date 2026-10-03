@@ -3204,6 +3204,10 @@ static int ipa_generic_plat_drv_probe(struct platform_device *pdev_p)
 		pdev_p->dev.of_node->name);
 
 	if (!ipa_api_ctrl) {
+		/* SMMU siblings can probe before the main IPA device. */
+		if (!of_device_is_compatible(pdev_p->dev.of_node, "qcom,ipa"))
+			return -EPROBE_DEFER;
+
 		ipa_api_ctrl = kzalloc(sizeof(*ipa_api_ctrl), GFP_KERNEL);
 		if (!ipa_api_ctrl)
 			return -ENOMEM;
