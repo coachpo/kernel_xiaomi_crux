@@ -241,6 +241,8 @@ struct dsi_panel {
 	bool crux_fod_dimlayer_enabled;
 	bool crux_fod_hbm_enabled;
 	bool crux_fod_hbm_requested;
+	bool crux_elvss_valid;
+	u8 crux_elvss_value;
 	u32 crux_doze_brightness;
 	u32 crux_fod_ui_ready;
 #endif

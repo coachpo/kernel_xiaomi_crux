@@ -23,6 +23,9 @@
 #include "dsi_panel.h"
 #include "dsi_ctrl_hw.h"
 #include "dsi_parser.h"
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+#include "dsi_display.h"
+#endif
 
 /**
  * topology is currently defined by a set of following 3 values:
@@ -837,6 +840,9 @@ int dsi_panel_set_fod_hbm(struct dsi_panel *panel, bool status)
 		!panel->cur_mode->priv_info)
 		return -EINVAL;
 
+	rc = dsi_display_crux_prepare_fod(panel);
+	if (rc)
+		return rc;
 	if (status)
 		type = DSI_CMD_SET_DISP_HBM_FOD_ON;
 	else if (panel->doze_enabled)
@@ -4808,6 +4814,7 @@ int dsi_panel_disable(struct dsi_panel *panel)
 #ifdef CONFIG_MACH_XIAOMI_CRUX
 	panel->crux_fod_hbm_enabled = false;
 	panel->crux_fod_hbm_requested = false;
+	panel->crux_elvss_valid = false;
 #endif
 
 	mutex_unlock(&panel->panel_lock);

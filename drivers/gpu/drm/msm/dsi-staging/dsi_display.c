@@ -34,6 +34,9 @@
 #include "sde_dbg.h"
 #include "dsi_parser.h"
 #include "dsi_phy.h"
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+#include <video/mipi_display.h>
+#endif
 
 #define to_dsi_display(x) container_of(x, struct dsi_display, host)
 #define INT_BASE_10 10
@@ -2938,6 +2941,144 @@ error:
 	return rc;
 }
 
+
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+/* Caller holds panel_lock. Read the panel's B7 value before enabling FOD. */
+int dsi_display_crux_prepare_fod(struct dsi_panel *panel)
+{
+	static const enum dsi_cmd_set_type types[] = {
+		DSI_CMD_SET_DISP_HBM_FOD_ON,
+		DSI_CMD_SET_DISP_HBM_FOD_OFF,
+		DSI_CMD_SET_DISP_HBM_FOD_OFF_DOZE_HBM_ON,
+		DSI_CMD_SET_DISP_HBM_FOD_OFF_DOZE_LBM_ON,
+	};
+	static const u32 indexes[] = { 4, 6, 6, 6 };
+	struct dsi_parser_utils *utils = &panel->utils;
+	struct dsi_display *display;
+	struct dsi_ctrl *ctrl;
+	struct dsi_panel_cmd_set *set;
+	struct mipi_dsi_msg offset_msg = { 0 }, read_msg = { 0 };
+	const u8 *offset, *read;
+	const char *offset_state, *read_state;
+	u8 *targets[ARRAY_SIZE(types)];
+	u8 value = 0;
+	u32 read_len;
+	int offset_len, read_cmd_len, rc, cleanup_rc, i;
+	u32 flags = DSI_CTRL_CMD_FETCH_MEMORY | DSI_CTRL_CMD_LAST_COMMAND;
+
+	if (!panel->panel_of_node ||
+	    strcmp(panel->panel_of_node->name,
+		"qcom,mdss_dsi_samsung_fhd_ea8076_f1s_cmd") ||
+	    !utils->read_bool(utils->data, "qcom,elvss_dimming_check_enable"))
+		return 0;
+	if (!panel->host || !panel->cur_mode || !panel->cur_mode->priv_info)
+		return -EINVAL;
+
+	/* Validate every target before changing any timing command payload. */
+	for (i = 0; i < ARRAY_SIZE(types); i++) {
+		const u8 *payload, *previous;
+
+		set = &panel->cur_mode->priv_info->cmd_sets[types[i]];
+		if (!set->cmds || set->count <= indexes[i] ||
+		    set->cmds[indexes[i]].msg.tx_len != 2 ||
+		    set->cmds[indexes[i] - 1].msg.tx_len != 2 ||
+		    set->cmds[indexes[i]].msg.type != MIPI_DSI_DCS_LONG_WRITE)
+			return -EINVAL;
+		payload = set->cmds[indexes[i]].msg.tx_buf;
+		previous = set->cmds[indexes[i] - 1].msg.tx_buf;
+		if (!payload || !previous || payload[0] != 0xb7 ||
+		    previous[0] != 0xb0 || previous[1] != 0x07)
+			return -EINVAL;
+		targets[i] = (u8 *)payload;
+	}
+	if (panel->crux_elvss_valid)
+		goto patch_commands;
+
+	offset = utils->get_property(utils->data,
+		"qcom,mdss-dsi-dispparam-elvss-dimming-offset-command", &offset_len);
+	read = utils->get_property(utils->data,
+		"qcom,mdss-dsi-dispparam-elvss-dimming-read-command", &read_cmd_len);
+	offset_state = utils->get_property(utils->data,
+		"qcom,mdss-dsi-dispparam-elvss-dimming-offset-command-state", NULL);
+	read_state = utils->get_property(utils->data,
+		"qcom,mdss-dsi-dispparam-elvss-dimming-read-command-state", NULL);
+	rc = utils->read_u32(utils->data,
+		"qcom,mdss-dsi-panel-elvss-dimming-read-length", &read_len);
+	if (rc || read_len != 1 || !offset || offset_len != 9 ||
+	    !read || read_cmd_len != 8 || !offset_state || !read_state ||
+	    strcmp(offset_state, "dsi_hs_mode") || strcmp(read_state, "dsi_hs_mode") ||
+	    offset[0] != MIPI_DSI_DCS_LONG_WRITE || offset[1] != 1 || offset[3] > 1 || offset[4] ||
+	    offset[5] || offset[6] != 2 || offset[7] != 0xb0 || offset[8] != 0x07 ||
+	    read[0] != MIPI_DSI_DCS_READ || read[1] != 1 || read[3] > 1 || read[4] ||
+	    read[5] || read[6] != 1 || read[7] != 0xb7)
+		return -EINVAL;
+
+	display = to_dsi_display(panel->host);
+	if (display->ctrl_count != 1)
+		return -EINVAL;
+	ctrl = display->ctrl[display->cmd_master_idx].ctrl;
+	if (!ctrl || !dsi_ctrl_validate_host_state(ctrl))
+		return -EAGAIN;
+	offset_msg.channel = offset[2];
+	offset_msg.type = offset[0];
+	offset_msg.flags = MIPI_DSI_MSG_LASTCOMMAND |
+		(offset[3] ? MIPI_DSI_MSG_REQ_ACK : 0);
+	offset_msg.tx_buf = offset + 7;
+	offset_msg.tx_len = 2;
+	read_msg.channel = read[2];
+	read_msg.type = read[0];
+	read_msg.flags = MIPI_DSI_MSG_LASTCOMMAND |
+		(read[3] ? MIPI_DSI_MSG_REQ_ACK : 0);
+	read_msg.tx_buf = read + 7;
+	read_msg.tx_len = 1;
+	read_msg.rx_buf = &value;
+	read_msg.rx_len = 1;
+
+	rc = dsi_display_clk_ctrl(display->dsi_clk_handle, DSI_ALL_CLKS, DSI_CLK_ON);
+	if (rc)
+		goto failed;
+	rc = dsi_display_wake_up(display);
+	if (rc)
+		goto disable_clocks;
+	rc = dsi_display_cmd_engine_enable(display);
+	if (rc)
+		goto disable_clocks;
+	if (!display->tx_cmd_buf) {
+		rc = dsi_host_alloc_cmd_tx_buffer(display);
+		if (rc)
+			goto disable_engine;
+	}
+	rc = dsi_ctrl_cmd_transfer(ctrl, &offset_msg, flags);
+	if (rc)
+		goto disable_engine;
+	rc = dsi_ctrl_cmd_transfer(ctrl, &read_msg,
+		flags | DSI_CTRL_CMD_READ | DSI_CTRL_CMD_CUSTOM_DMA_SCHED);
+	if (rc == 1)
+		rc = 0;
+	else if (rc >= 0)
+		rc = -EIO;
+disable_engine:
+	cleanup_rc = dsi_display_cmd_engine_disable(display);
+	if (!rc)
+		rc = cleanup_rc;
+disable_clocks:
+	cleanup_rc = dsi_display_clk_ctrl(display->dsi_clk_handle, DSI_ALL_CLKS, DSI_CLK_OFF);
+	if (!rc)
+		rc = cleanup_rc;
+	if (rc)
+		goto failed;
+	panel->crux_elvss_value = value;
+	panel->crux_elvss_valid = true;
+patch_commands:
+	for (i = 0; i < ARRAY_SIZE(types); i++)
+		targets[i][1] = i ? panel->crux_elvss_value :
+			panel->crux_elvss_value & 0x7f;
+	return 0;
+failed:
+	pr_err("[%s] Crux ELVSS read failed: %d\n", panel->name, rc);
+	return rc;
+}
+#endif
 
 static struct mipi_dsi_host_ops dsi_host_ops = {
 	.attach = dsi_host_attach,
