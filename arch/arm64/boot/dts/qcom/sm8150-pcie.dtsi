@@ -251,6 +251,7 @@
 	pcie0_msi: qcom,pcie0_msi@17a00040 {
 		compatible = "qcom,pci-msi";
 		msi-controller;
+		#msi-cells = <0>;
 		reg = <0x17a00040 0x0>;
 		interrupt-parent = <&pdc>;
 		interrupts = <GIC_SPI 768 IRQ_TYPE_EDGE_RISING>,
@@ -574,6 +575,7 @@
 	pcie1_msi: qcom,pcie1_msi@17a00040 {
 		compatible = "qcom,pci-msi";
 		msi-controller;
+		#msi-cells = <0>;
 		reg = <0x17a00040 0x0>;
 		interrupt-parent = <&pdc>;
 		interrupts = <GIC_SPI 800 IRQ_TYPE_EDGE_RISING>,

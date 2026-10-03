@@ -65,8 +65,9 @@ int gmu_core_probe(struct kgsl_device *device)
 			ADRENO_GPMU) ? BIT(GMU_GPMU) : 0;
 
 	for (i = 0; i < ARRAY_SIZE(gmu_subtypes); i++) {
-		node = of_find_compatible_node(device->pdev->dev.of_node,
-				NULL, gmu_subtypes[i].compat);
+		/* GMU is a sibling of the GPU; its DT order is not fixed. */
+		node = of_find_compatible_node(NULL, NULL,
+				gmu_subtypes[i].compat);
 
 		if (node != NULL) {
 			gmu_core_ops = gmu_subtypes[i].core_ops;
