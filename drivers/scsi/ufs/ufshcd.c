@@ -5559,6 +5559,7 @@ static int ufshcd_link_recovery(struct ufs_hba *hba)
 
 static int __ufshcd_uic_hibern8_enter(struct ufs_hba *hba)
 {
+	static atomic_t hibern8_failure_dumped = ATOMIC_INIT(0);
 	int ret;
 	struct uic_command uic_cmd = {0};
 	ktime_t start = ktime_get();
@@ -5585,6 +5586,9 @@ static int __ufshcd_uic_hibern8_enter(struct ufs_hba *hba)
 		dev_err(hba->dev, "%s: hibern8 enter failed. ret = %d\n",
 			__func__, ret);
 		ufshcd_custom_cmd_log(hba, "h8-enter-failed");
+		/* Preserve the caller before recovery schedules another worker. */
+		if (ret && atomic_cmpxchg(&hibern8_failure_dumped, 0, 1) == 0)
+			dump_stack();
 
 		/*
 		 * If link recovery fails then return error code returned from
