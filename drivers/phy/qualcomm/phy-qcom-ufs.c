@@ -363,8 +363,15 @@ static int ufs_qcom_phy_enable_vreg(struct device *dev,
 {
 	int ret = 0;
 
-	if (!vreg || vreg->enabled)
+	if (!vreg)
 		goto out;
+
+	if (vreg->enabled) {
+		/* Restore the load vote dropped for always-on supplies in LPM. */
+		if (vreg->is_always_on)
+			ret = ufs_qcom_phy_cfg_vreg(dev, vreg, true);
+		goto out;
+	}
 
 	ret = ufs_qcom_phy_cfg_vreg(dev, vreg, true);
 	if (ret) {
