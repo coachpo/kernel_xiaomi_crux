@@ -284,6 +284,10 @@ static int smb5_get_prop_input_voltage_regulation(struct smb_charger *chg,
 		chg->wls_chip_psy = chg->idtp_psy;
 	else {
 		chg->wip_psy = power_supply_get_by_name("rx1618");
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+		if (!chg->wip_psy)
+			chg->wip_psy = power_supply_get_by_name("rx1619");
+#endif
 		if (chg->wip_psy)
 			chg->wls_chip_psy = chg->wip_psy;
 		else
@@ -2078,6 +2082,10 @@ static int smb5_get_prop_wireless_signal(struct smb_charger *chg,
 		chg->wls_chip_psy = chg->idtp_psy;
 	else {
 		chg->wip_psy = power_supply_get_by_name("rx1618");
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+		if (!chg->wip_psy)
+			chg->wip_psy = power_supply_get_by_name("rx1619");
+#endif
 		if (chg->wip_psy)
 			chg->wls_chip_psy = chg->wip_psy;
 		else
@@ -2109,6 +2117,10 @@ static int smb5_set_prop_input_voltage_regulation(struct smb_charger *chg,
 		chg->wls_chip_psy = chg->idtp_psy;
 	else {
 		chg->wip_psy = power_supply_get_by_name("rx1618");
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+		if (!chg->wip_psy)
+			chg->wip_psy = power_supply_get_by_name("rx1619");
+#endif
 		if (chg->wip_psy)
 			chg->wls_chip_psy = chg->wip_psy;
 		else
@@ -2126,6 +2138,10 @@ static int smb5_get_prop_wirless_type(struct smb_charger *chg,
 				union power_supply_propval *val)
 {
 	chg->idtp_psy = power_supply_get_by_name("idt");
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	if (!chg->idtp_psy)
+		chg->idtp_psy = power_supply_get_by_name("rx1619");
+#endif
 	if (chg->idtp_psy)
 		power_supply_get_property(chg->idtp_psy,
 			POWER_SUPPLY_PROP_TX_ADAPTER, val);
@@ -2133,6 +2149,36 @@ static int smb5_get_prop_wirless_type(struct smb_charger *chg,
 	return 1;
 }
 
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+static int smb5_get_prop_div_2_mode(union power_supply_propval *val)
+{
+	struct power_supply *psy;
+	int rc;
+
+	psy = power_supply_get_by_name("lionsemi");
+	if (!psy)
+		return -ENODEV;
+
+	rc = power_supply_get_property(psy, POWER_SUPPLY_PROP_DIV_2_MODE, val);
+	power_supply_put(psy);
+	return rc;
+}
+
+static int smb5_set_prop_div_2_mode(enum power_supply_property psp,
+				const union power_supply_propval *val)
+{
+	struct power_supply *psy;
+	int rc;
+
+	psy = power_supply_get_by_name("lionsemi");
+	if (!psy)
+		return -ENODEV;
+
+	rc = power_supply_set_property(psy, psp, val);
+	power_supply_put(psy);
+	return rc;
+}
+#endif
 /*************************
  * WIRELESS PSY REGISTRATION *
  *************************/
@@ -2145,6 +2191,10 @@ static enum power_supply_property smb5_wireless_props[] = {
 	POWER_SUPPLY_PROP_WIRELESS_CP_EN,
 	POWER_SUPPLY_PROP_WIRELESS_POWER_GOOD_EN,
 	POWER_SUPPLY_PROP_TX_ADAPTER,
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	POWER_SUPPLY_PROP_DIV_2_MODE,
+	POWER_SUPPLY_PROP_RESET_DIV_2_MODE,
+#endif
 };
 
 static int smb5_wireless_set_prop(struct power_supply *psy,
@@ -2171,6 +2221,12 @@ static int smb5_wireless_set_prop(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_WIRELESS_POWER_GOOD_EN:
 		smblib_set_wirless_power_good_enable(chg, val);
 		break;
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	case POWER_SUPPLY_PROP_DIV_2_MODE:
+	case POWER_SUPPLY_PROP_RESET_DIV_2_MODE:
+		rc = smb5_set_prop_div_2_mode(psp, val);
+		break;
+#endif
 	default:
 		return -EINVAL;
 	}
@@ -2208,6 +2264,10 @@ static int smb5_wireless_get_prop(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_TX_ADAPTER:
 		smb5_get_prop_wirless_type(chg, val);
 		break;
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	case POWER_SUPPLY_PROP_DIV_2_MODE:
+		return smb5_get_prop_div_2_mode(val);
+#endif
 	default:
 		return -EINVAL;
 	}
@@ -2222,6 +2282,10 @@ static int smb5_wireless_prop_is_writeable(struct power_supply *psy,
 		enum power_supply_property psp)
 {
 	switch (psp) {
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	case POWER_SUPPLY_PROP_DIV_2_MODE:
+	case POWER_SUPPLY_PROP_RESET_DIV_2_MODE:
+#endif
 	case POWER_SUPPLY_PROP_WIRELESS_VERSION:
 	case POWER_SUPPLY_PROP_WIRELESS_WAKELOCK:
 	case POWER_SUPPLY_PROP_INPUT_VOLTAGE_REGULATION:

@@ -127,6 +127,10 @@ static void smblib_wireless_set_enable(struct smb_charger *chg, int enable)
 	union power_supply_propval val = {0, };
 
 	chg->idtp_psy = power_supply_get_by_name("idt");
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	if (!chg->idtp_psy)
+		chg->idtp_psy = power_supply_get_by_name("rx1619");
+#endif
 	if (chg->idtp_psy)
 	{
 		val.intval = enable;
@@ -3748,6 +3752,10 @@ int smblib_get_prop_wireless_version(struct smb_charger *chg,
 		chg->wls_chip_psy = chg->idtp_psy;
 	else {
 		chg->wip_psy = power_supply_get_by_name("rx1618");
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+		if (!chg->wip_psy)
+			chg->wip_psy = power_supply_get_by_name("rx1619");
+#endif
 		if (chg->wip_psy)
 			chg->wls_chip_psy = chg->wip_psy;
 		else
@@ -8273,6 +8281,10 @@ irqreturn_t dc_plugin_irq_handler(int irq, void *data)
 		return IRQ_HANDLED;
 
 	chg->idtp_psy = power_supply_get_by_name("idt");
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+	if (!chg->idtp_psy)
+		chg->idtp_psy = power_supply_get_by_name("rx1619");
+#endif
 	if (!chg->idtp_psy)
 		dev_err(chg->dev, "Could not get idtp psy\n");
 
