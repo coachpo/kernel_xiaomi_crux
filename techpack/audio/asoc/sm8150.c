@@ -7766,7 +7766,8 @@ static struct snd_soc_card *populate_snd_card_dailinks(struct device *dev)
 					sizeof(quat_mi2s_rx_tas2557_dai_links));
 				total_links += ARRAY_SIZE(quat_mi2s_rx_tas2557_dai_links);
 			} else if (get_hw_version_platform() == HARDWARE_PLATFORM_CEPHEUS ||
-					get_hw_version_platform() == HARDWARE_PLATFORM_HERCULES) {
+					get_hw_version_platform() == HARDWARE_PLATFORM_HERCULES ||
+					get_hw_version_platform() == HARDWARE_PLATFORM_CRUX) {
 				memcpy(msm_tavil_dai_links + total_links,
 					quat_mi2s_rx_cs35l41_dai_links,
 					sizeof(quat_mi2s_rx_cs35l41_dai_links));

@@ -76,6 +76,7 @@ enum {
 	HW_PLATFORM_E5G = 39,
 	HW_PLATFORM_F11 = 40,
 	HW_PLATFORM_F1B = 41,
+	HW_PLATFORM_F1X = 43,
 	HW_PLATFORM_INVALID
 };
 
@@ -105,7 +106,8 @@ const char *hw_platform[] = {
 	[HW_PLATFORM_F10] = "DAVINCI",
 	[HW_PLATFORM_E5G] = "ANDROMEDA",
 	[HW_PLATFORM_F11] = "RAPHAEL",
-	[HW_PLATFORM_F1B] = "HERCULES"
+	[HW_PLATFORM_F1B] = "HERCULES",
+	[HW_PLATFORM_F1X] = "CRUX"
 };
 
 enum {
@@ -1865,6 +1867,8 @@ uint32_t get_hw_version_platform(void)
 		return HARDWARE_PLATFORM_RAPHAEL;
 	if (hw_type == HW_PLATFORM_F1B)
 		return HARDWARE_PLATFORM_HERCULES;
+	else if (hw_type == HW_PLATFORM_F1X)
+		return HARDWARE_PLATFORM_CRUX;
 	else
 		return HARDWARE_PLATFORM_UNKNOWN;
 }
