@@ -1,52 +1,27 @@
-DATE=$(date +"%Y%m%d")
-VERSION=$(git rev-parse --short HEAD)
-KERNEL_NAME=Evasi0nKernel-cepheus-"$DATE"
+#!/usr/bin/env bash
+set -euo pipefail
 
-export KERNEL_PATH=$PWD
-export ANYKERNEL_PATH=~/Anykernel3
-export CLANG_PATH=~/prelude-clang
-export PATH=${CLANG_PATH}/bin:${PATH}
-export CLANG_TRIPLE=aarch64-linux-gnu-
-export CROSS_COMPILE=aarch64-linux-gnu-
-export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-export CLANG_PREBUILT_BIN=${CLANG_PATH}/bin
-export CC="ccache clang"
-export CXX="ccache clang++"
-export LD=ld.lld
-export LLVM=1
-export LLVM_IAS=1
-export ARCH=arm64
-export SUBARCH=arm64
-
-echo "===================Setup Environment==================="
-git clone --depth=1 https://gitlab.com/jjpprrrr/prelude-clang.git $CLANG_PATH
-git clone https://github.com/osm0sis/AnyKernel3 $ANYKERNEL_PATH
-sh -c "$(curl -sSL https://github.com/akhilnarang/scripts/raw/master/setup/android_build_env.sh/)"
-
-echo "=========================Clean========================="
-rm -rf $KERNEL_PATH/out/ *.zip
-make mrproper && git reset --hard HEAD
-
-echo "=========================Build========================="
-make O=out cepheus_defconfig
-make O=out -j12 | tee out/kernel.log
-
-if [ ! -e $KERNEL_PATH/out/arch/arm64/boot/Image.gz-dtb ]; then
-    echo "=======================FAILED!!!======================="
-    rm -rf $ANYKERNEL_PATH
-    make mrproper>/dev/null 2>&1
-    git reset --hard HEAD 2>&1
-    exit -1>/dev/null 2>&1
+# Build Crux source artifacts; loader/FIT/device integration lives outside this repo.
+kernel_src_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+kernel_out_dir=${KERNEL_OUTPUT_DIR:-"$kernel_src_dir/out"}
+kernel_jobs=${KERNEL_JOBS:-$(getconf _NPROCESSORS_ONLN)}
+if [[ -n "${KERNEL_CLANG_ROOT:-}" ]]; then
+    export PATH="$KERNEL_CLANG_ROOT/bin:$PATH"
 fi
-
-echo "=========================Patch========================="
-rm -r $ANYKERNEL_PATH/modules $ANYKERNEL_PATH/patch $ANYKERNEL_PATH/ramdisk
-cp $KERNEL_PATH/anykernel.sh $ANYKERNEL_PATH/
-cp $KERNEL_PATH/out/arch/arm64/boot/Image.gz-dtb $ANYKERNEL_PATH/
-cd $ANYKERNEL_PATH
-zip -r $KERNEL_NAME *
-mv $KERNEL_NAME.zip $KERNEL_PATH/out/
-cd $KERNEL_PATH
-#rm -rf $CLANG_PATH
-rm -rf $ANYKERNEL_PATH
-echo $KERNEL_NAME.zip
+for kernel_tool in clang ld.lld; do
+    command -v "$kernel_tool" >/dev/null || { echo "missing $kernel_tool; set KERNEL_CLANG_ROOT to the declared Prelude toolchain" >&2; exit 1; }
+done
+kernel_make_args=( -C "$kernel_src_dir" O="$kernel_out_dir" ARCH=arm64 LLVM=1 LLVM_IAS=1
+    CC=clang LD=ld.lld CLANG_TRIPLE=aarch64-linux-gnu-
+    CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
+    CROSS_COMPILE_ARM32="${CROSS_COMPILE_ARM32:-arm-linux-gnueabi-}" )
+make "${kernel_make_args[@]}" crux_defconfig
+if [[ "${1:-}" == --configure-only ]]; then
+    exit 0
+fi
+if [[ $# -gt 0 ]]; then
+    echo "usage: $0 [--configure-only]" >&2
+    exit 2
+fi
+make "${kernel_make_args[@]}" -j"$kernel_jobs" Image dtbs
+printf '%s\n' "Crux Image/DT/config/symbols are in $kernel_out_dir; package through the PE/TWRP U-Boot integration."

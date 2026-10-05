@@ -16,3 +16,13 @@ The matching 4.14.305 kernel has booted TWRP and PE Recovery through Crux U-Boot
 All Crux ROM/Recovery kernel diagnostics use U-Boot with an explicitly armed and verified APSS watchdog. Kernel images must be paired with their actual source/configuration, DT, ramdisk and symbols. Do not replace the development U-Boot loader with an Android kernel image.
 
 General Linux build/development documentation remains in [Documentation/admin-guide/README.rst](Documentation/admin-guide/README.rst).
+
+## Standalone source build
+
+Use the declared Prelude Clang toolchain (`ac8fce34dc0f6918672100d7a6e867a66b8afa8f`) and ARM cross-binutils, then run:
+
+```sh
+KERNEL_CLANG_ROOT=/path/to/prelude-clang ./build.sh
+```
+
+`KERNEL_OUTPUT_DIR` selects an independent output directory; `--configure-only` prepares the actual Crux configuration without building the kernel. The script does not reset source, download/run setup scripts, create a boot-flashing installer or operate a device. Manual CI produces Image/DT/config/symbol artifacts for the existing U-Boot packaging flow.
