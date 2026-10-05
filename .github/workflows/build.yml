@@ -27,6 +27,7 @@ jobs:
         run: ./build.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
+          include-hidden-files: true
           name: crux-kernel-${{ github.sha }}
           path: |
             out/arch/arm64/boot/Image
