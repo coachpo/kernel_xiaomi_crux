@@ -450,6 +450,11 @@ And public attribution of xiaomi platforms(like F1X and so and)
 	status = "disabled";
 };
 
+/* The unused secondary USB extcon shares PM8150 GPIO10 with SMB5. */
+&extcon_usb1 {
+	status = "disabled";
+};
+
 &usb1 {
 	extcon = <&extcon_usb1>;
 	status = "disabled";
