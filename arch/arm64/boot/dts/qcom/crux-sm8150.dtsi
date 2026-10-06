@@ -165,7 +165,8 @@ And public attribution of xiaomi platforms(like F1X and so and)
 };
 
 &qupv3_se8_i2c {
-	status = "ok";
+	/* This SE8 I2C pinmux shares GPIO 89 with Crux CS35L41 reset. */
+	status = "disabled";
 	/*smart PA*/
 	tas2557@4c{
 		compatible = "ti,tas2557";
