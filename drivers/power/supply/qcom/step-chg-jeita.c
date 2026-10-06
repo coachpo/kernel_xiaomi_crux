@@ -492,14 +492,6 @@ static int get_val(struct range_data *range, int hysteresis, int current_index,
 		*val = range[*new_index].value;
 	}
 
-	if (threshold < range[0].low_threshold) {
-		*new_index = 0;
-		*val = range[*new_index].value;
-	} else if (threshold > range[MAX_STEP_CHG_ENTRIES - 1].low_threshold) {
-		*new_index = MAX_STEP_CHG_ENTRIES - 1;
-		*val = range[*new_index].value;
-	}
-
 	/*
 	 * If we don't have a current_index return this
 	 * newfound value. There is no hysterisis from out of range
