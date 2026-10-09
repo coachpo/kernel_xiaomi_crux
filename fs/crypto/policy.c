@@ -29,7 +29,8 @@ bool fscrypt_policies_equal(const union fscrypt_policy *policy1,
 	if (policy1->version != policy2->version)
 		return false;
 
-	if (fscrypt_policy_contents_mode(policy1) == FSCRYPT_MODE_PRIVATE)
+	if (policy1->version == FSCRYPT_POLICY_V1 &&
+	    fscrypt_policy_contents_mode(policy1) == FSCRYPT_MODE_PRIVATE)
 		return(!memcmp(policy1->v1.master_key_descriptor,
 		       policy2->v1.master_key_descriptor,
 		       FSCRYPT_KEY_DESCRIPTOR_SIZE)) &&

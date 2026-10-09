@@ -478,8 +478,9 @@ static void put_crypt_info(struct fscrypt_info *ci)
 	if (ci->ci_direct_key)
 		fscrypt_put_direct_key(ci->ci_direct_key);
 	else if (ci->ci_owns_key) {
-		if (fscrypt_policy_contents_mode(&ci->ci_policy) !=
-		    FSCRYPT_MODE_PRIVATE) {
+		if (ci->ci_policy.version != FSCRYPT_POLICY_V1 ||
+		    fscrypt_policy_contents_mode(&ci->ci_policy) !=
+			FSCRYPT_MODE_PRIVATE) {
 			fscrypt_destroy_prepared_key(&ci->ci_key);
 		} else {
 			crypto_free_skcipher(ci->ci_key.tfm);
