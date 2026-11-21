@@ -3343,7 +3343,13 @@ static void fts_enter_pointer_event_handler(struct fts_ts_info *info,
 #ifdef CONFIG_FTS_FOD_AREA_REPORT
 		if (fts_is_in_fodarea(x, y) && !(info->fod_id & ~(1 << touchId))
 #ifdef CONFIG_MACH_XIAOMI_CRUX
-		    && fts_fingerprint_is_enable()
+		    /*
+		     * fod_status gates only a new press. The HAL clears it between
+		     * captures, and a finger already pressed in the area stays pressed
+		     * until it leaves the area or lifts.
+		     */
+		    && (test_bit(touchId, &info->fod_id) ||
+			fts_fingerprint_is_enable())
 #endif
 		   ) {
 			__set_bit(touchId, &info->sleep_finger);
