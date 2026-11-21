@@ -3352,9 +3352,13 @@ static void fts_enter_pointer_event_handler(struct fts_ts_info *info,
 			info->fod_coordinate_update = true;
 			__set_bit(touchId, &info->fod_id);
 			input_report_abs(info->input_dev, ABS_MT_WIDTH_MINOR, info->fod_overlap);
-#ifndef CONFIG_MACH_XIAOMI_CRUX
+			/*
+			 * The Goodix HAL starts a capture only on BTN_INFO. Report the
+			 * screen-on press directly instead of waiting for the firmware
+			 * long-press gesture, which is armed only for enrollment and on
+			 * display power transitions.
+			 */
 			input_report_key(info->input_dev, BTN_INFO, 1);
-#endif
 #ifndef CONFIG_MACH_XIAOMI_CRUX
 			input_report_key(info->input_dev, KEY_INFO, 1);
 #endif
