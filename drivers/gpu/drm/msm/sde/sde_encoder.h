@@ -183,6 +183,18 @@ void sde_encoder_kickoff(struct drm_encoder *encoder, bool is_error);
 int sde_encoder_wait_for_event(struct drm_encoder *drm_encoder,
 						enum msm_event_wait event);
 
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+/**
+ * sde_encoder_crux_wait_for_te - wait for panel TE read pointer events
+ * @encoder:	encoder pointer
+ * @count:	number of TE events to wait for
+ * Holds the read pointer interrupt for the wait, so the wait does not depend
+ * on a userspace vblank request. Returns: 0 on success, error otherwise
+ */
+int sde_encoder_crux_wait_for_te(struct drm_encoder *encoder,
+		unsigned int count);
+#endif
+
 /**
  * sde_encoder_idle_request - request for idle request to avoid 4 vsync cycle
  *                            to turn off the clocks.

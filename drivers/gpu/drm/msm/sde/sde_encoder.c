@@ -5565,6 +5565,39 @@ int sde_encoder_wait_for_event(struct drm_encoder *drm_enc,
 	return ret;
 }
 
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+int sde_encoder_crux_wait_for_te(struct drm_encoder *drm_enc,
+		unsigned int count)
+{
+	struct sde_encoder_virt *sde_enc;
+	struct sde_encoder_phys *phys;
+	unsigned int n;
+	int i, rc = 0, cleanup_rc;
+
+	if (!drm_enc)
+		return -EINVAL;
+	sde_enc = to_sde_encoder_virt(drm_enc);
+
+	for (i = 0; i < sde_enc->num_phys_encs && !rc; i++) {
+		phys = sde_enc->phys_encs[i];
+		if (!phys || !phys->ops.control_vblank_irq ||
+		    !phys->ops.wait_for_vblank)
+			continue;
+
+		rc = phys->ops.control_vblank_irq(phys, true);
+		if (rc)
+			break;
+		for (n = 0; n < count && !rc; n++)
+			rc = phys->ops.wait_for_vblank(phys);
+		cleanup_rc = phys->ops.control_vblank_irq(phys, false);
+		if (!rc)
+			rc = cleanup_rc;
+	}
+
+	return rc;
+}
+#endif
+
 enum sde_intf_mode sde_encoder_get_intf_mode(struct drm_encoder *encoder)
 {
 	struct sde_encoder_virt *sde_enc = NULL;
