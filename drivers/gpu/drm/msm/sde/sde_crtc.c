@@ -5365,9 +5365,18 @@ static void sde_crtc_fod_atomic_check(struct sde_crtc_state *cstate,
 	int plane_idx;
 	int zpos = INT_MAX;
 #ifdef CONFIG_MACH_XIAOMI_CRUX
-	int fod;
+	struct dsi_display *display;
+	struct sde_kms *kms;
+	int fod, top = -1;
 
-	/* PE13 supplies its dim layers; the plane marker synchronizes HBM/UI. */
+	/*
+	 * The plane marker synchronizes HBM and the FOD UI state. While the
+	 * pressed layer drives HBM, a dim layer keeps the rest of the screen at
+	 * its previous brightness and leaves only the spot bright. SurfaceFlinger
+	 * composes the layers below the pressed layer on the GPU, but layers
+	 * above it, such as the navigation bar, keep their own planes; stage the
+	 * dim layer above every other plane and the pressed layer above the dim.
+	 */
 	cstate->crux_fod_plane_sync_info = 0;
 	cstate->fod_dim_layer = NULL;
 	for (plane_idx = 0; plane_idx < cnt; plane_idx++) {
@@ -5376,7 +5385,23 @@ static void sde_crtc_fod_atomic_check(struct sde_crtc_state *cstate,
 			cstate->crux_fod_plane_sync_info |= BIT(1);
 		else if (fod == 2)
 			cstate->crux_fod_plane_sync_info |= BIT(0) | BIT(1);
+		if (fod != 2 && pstates[plane_idx].stage > top)
+			top = pstates[plane_idx].stage;
 	}
+
+	display = get_main_display();
+	kms = _sde_crtc_get_kms(cstate->base.crtc);
+	if (!(cstate->crux_fod_plane_sync_info & BIT(0)) || !display ||
+	    !display->panel ||
+	    !READ_ONCE(display->panel->crux_fod_dimlayer_enabled) ||
+	    !kms || !kms->catalog || SDE_STAGE_0 + top + 2 >=
+	    kms->catalog->mixer[0].sblk->maxblendstages)
+		return;
+
+	for (plane_idx = 0; plane_idx < cnt; plane_idx++)
+		if (sde_plane_is_fod_layer(pstates[plane_idx].drm_pstate) == 2)
+			pstates[plane_idx].stage = top + 2;
+	cstate->fod_dim_layer = sde_crtc_setup_fod_dim_layer(cstate, top + 1);
 	return;
 #endif
 
