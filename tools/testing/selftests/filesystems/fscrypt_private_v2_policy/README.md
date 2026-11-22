@@ -36,10 +36,10 @@ Choose an actual existing target. Do not chown another directory or create/seed 
 Use the already available Android clang and ARM64 Bionic SDK, with an artifact directory outside the kernel build output. This example uses the declared PE13 offline toolchain; it invokes no Android `m`, Soong, Ninja or dependency installation.
 
 ```sh
-PE_ROOT=/home/qingli/crux-pe13-offline-2026-09-25/pe13
+PE_ROOT=$HOME/crux-pe13-offline-2026-09-25/pe13
 PROBE_CLANG_DIR="$PE_ROOT/prebuilts/clang/host/linux-x86/clang-r450784d"
 PROBE_SDK="$PE_ROOT/prebuilts/runtime/mainline/runtime/sdk/android/arm64"
-PROBE_SOURCE=/home/qingli/crux-kernel-cepheus/tools/testing/selftests/filesystems/fscrypt_private_v2_policy/policy_identifier.c
+PROBE_SOURCE=$HOME/crux-kernel-cepheus/tools/testing/selftests/filesystems/fscrypt_private_v2_policy/policy_identifier.c
 # Set PROBE_ARTIFACT_DIR to an existing, task-owned output directory.
 TMPDIR="$PROBE_ARTIFACT_DIR" "$PROBE_CLANG_DIR/bin/clang" \
   --target=aarch64-linux-android33 --sysroot="$PROBE_SDK" \
