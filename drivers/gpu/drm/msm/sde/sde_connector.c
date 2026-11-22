@@ -703,9 +703,10 @@ static int sde_connector_crux_update_fod_hbm(struct drm_connector *conn)
 {
 	struct dsi_panel *panel = sde_connector_crux_panel(conn);
 	struct drm_crtc *crtc = conn->state ? conn->state->crtc : NULL;
+	struct drm_encoder *encoder = to_sde_connector(conn)->encoder;
 	struct sde_crtc_state *cstate;
-	bool enabled;
-	int rc;
+	bool enabled, change;
+	int rc = 0;
 
 	if (!panel || !crtc || !crtc->state)
 		return 0;
@@ -714,6 +715,22 @@ static int sde_connector_crux_update_fod_hbm(struct drm_connector *conn)
 	enabled = panel->crux_fod_hbm_requested ||
 		(READ_ONCE(panel->crux_fod_dimlayer_enabled) &&
 		(cstate->crux_fod_plane_sync_info & BIT(0)));
+	change = enabled != panel->crux_fod_hbm_enabled;
+	if (change && enabled)
+		rc = dsi_panel_crux_fod_pre_hbm(panel);
+	mutex_unlock(&panel->panel_lock);
+	if (rc || !change)
+		return rc;
+
+	/*
+	 * As stock MIUI does, send the FOD HBM commands one TE after the
+	 * preparation (on) or the previous frame (off), right before the frame
+	 * that adds or removes the dim layer.
+	 */
+	rc = sde_encoder_crux_wait_for_te(encoder, 1);
+	if (rc)
+		return rc;
+	mutex_lock(&panel->panel_lock);
 	rc = dsi_panel_set_fod_hbm(panel, enabled);
 	mutex_unlock(&panel->panel_lock);
 	return rc;

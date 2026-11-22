@@ -828,6 +828,35 @@ int dsi_panel_set_doze_mode(struct dsi_panel *panel, enum dsi_doze_mode_type mod
 }
 
 extern bool is_fod_hbm_enabled;
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+/*
+ * Stock MIUI prepares the F1S panel for FOD HBM by turning on brightness
+ * dimming and writing a DBV that differs from the last one by one or two
+ * steps, one TE before the FOD HBM on commands.
+ */
+int dsi_panel_crux_fod_pre_hbm(struct dsi_panel *panel)
+{
+	static const u8 dimming_on[] = { MIPI_DCS_WRITE_CONTROL_DISPLAY, 0x28 };
+	u32 bl = panel->bl_config.bl_level;
+	ssize_t len;
+
+	if (!panel->panel_initialized || panel->doze_enabled || !bl)
+		return 0;
+
+	len = mipi_dsi_dcs_write_buffer(&panel->mipi_device, dimming_on,
+		sizeof(dimming_on));
+	if (len < 0)
+		return len;
+	usleep_range(1000, 1010);
+
+	if (bl >= panel->bl_config.bl_max_level - 1)
+		panel->crux_bl_delta = panel->crux_bl_delta == -1 ? -2 : -1;
+	else
+		panel->crux_bl_delta = panel->crux_bl_delta == 1 ? 2 : 1;
+	return dsi_panel_update_backlight(panel, bl + panel->crux_bl_delta);
+}
+
+#endif
 int dsi_panel_set_fod_hbm(struct dsi_panel *panel, bool status)
 {
 	int rc = 0;

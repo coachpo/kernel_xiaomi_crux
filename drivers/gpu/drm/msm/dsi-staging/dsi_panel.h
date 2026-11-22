@@ -241,6 +241,7 @@ struct dsi_panel {
 	bool crux_fod_dimlayer_enabled;
 	bool crux_fod_hbm_enabled;
 	bool crux_fod_hbm_requested;
+	int crux_bl_delta;
 	bool crux_elvss_valid;
 	u8 crux_elvss_value;
 	u32 crux_doze_brightness;
@@ -377,6 +378,9 @@ int dsi_panel_set_doze_status(struct dsi_panel *panel, bool status);
 int dsi_panel_set_doze_mode(struct dsi_panel *panel, enum dsi_doze_mode_type mode);
 
 int dsi_panel_set_fod_hbm(struct dsi_panel *panel, bool status);
+#ifdef CONFIG_MACH_XIAOMI_CRUX
+int dsi_panel_crux_fod_pre_hbm(struct dsi_panel *panel);
+#endif
 #ifdef CONFIG_MACH_XIAOMI_CRUX
 int dsi_panel_crux_disp_param(struct dsi_panel *panel, u32 param);
 int dsi_panel_update_doze(struct dsi_panel *panel);
