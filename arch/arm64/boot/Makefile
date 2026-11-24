@@ -26,9 +26,11 @@ DTB_LIST := $(addsuffix .dtb,$(DTB_NAMES))
 else
 DTB_LIST := $(dtb-y)
 endif
-DTB_OBJS := $(shell find $(obj)/dts/ -name \*.dtb)
+# Sort: find(1) returns directory order, which differs between filesystems,
+# and the order of these lists sets the bytes of Image-dtb and dtbo.img.
+DTB_OBJS := $(sort $(shell find $(obj)/dts/ -name \*.dtb))
 
-DTBO_OBJS := $(shell find $(obj)/dts/ -name \*.dtbo)
+DTBO_OBJS := $(sort $(shell find $(obj)/dts/ -name \*.dtbo))
 
 # Add RTIC DTB to the DTB list if RTIC MPGen is enabled
 # Note, we keep this for compatibility with
